@@ -6,8 +6,8 @@ COPY package.json bun.lockb /app/
 
 RUN bun install
 
-EXPOSE 3000
-
 COPY . /app/
+
+EXPOSE 3000
 
 CMD ["bun", "run", "dev"]

@@ -1,6 +1,6 @@
 <template>
     <div>
-        <button>Upload File(s)</button>
+        <button>Upload Files(s)</button>
         <p>or</p>
         <button @click="toggleSessionNameInput" :class="showSessionNameInput ? 'scale-0' : 'scale-1'">Join
             Session</button>
