@@ -1,0 +1,79 @@
+version: "3.8"
+
+services:
+    database:
+        profiles:
+            - prod
+            - dev
+        build:
+            context: ./database
+        container_name: database
+        ports:
+            - 6379:6379
+        networks:
+            - drag_n_share
+
+    api:
+        profiles:
+            - prod
+        build:
+            context: ./api
+        container_name: api
+        ports:
+            - 7878:7878
+        depends_on:
+            - database
+        networks:
+            - drag_n_share
+
+    api-dev:
+        profiles:
+            - dev
+        build:
+            context: ./api
+            dockerfile: ./Dockerfile.dev
+        container_name: api-dev
+        ports:
+            - 7878:7878
+        volumes:
+            - ./api/src:/api/src
+            - ./api/.env:/api/.env
+            - ./api/Cargo.toml:/api/Cargo.toml
+            - ./api/Cargo.lock:/api/Cargo.lock
+        depends_on:
+            - database
+        networks:
+            - drag_n_share
+    
+    web-app:
+        profiles:
+            - prod
+        build:
+            context: ./web_app
+        container_name: web-app
+        ports:
+            - 3000:3000
+        depends_on:
+            - api
+        networks:
+            - drag_n_share
+    
+    web-app-dev:
+        profiles:
+            - dev
+        build:
+            context: ./web_app
+            dockerfile: ./Dockerfile.dev
+        container_name: web-app-dev
+        ports:
+            - 3000:3000
+        volumes:
+            - ./web_app:/web_app
+        depends_on:
+            - api-dev
+        networks:
+            - drag_n_share
+
+networks:
+    drag_n_share:
+        driver: bridge
