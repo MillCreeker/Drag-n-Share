@@ -19,9 +19,8 @@ use tokio::net::TcpListener;
 async fn main() {
     dotenvy::dotenv().expect("Unable to load .env file");
 
-    let server_address = std::env::var("SERVER_ADDRESS").expect("SERVER_ADDRESS not defined");
-
-    // TODO connect to redis DB
+    let server_address = std::env::var("BASE_URL").expect("URL_BASE not defined");
+    
     match connect_to_redis().await {
         Ok(value) => println!("Connected to Redis: {}", value),
         Err(err) => println!("Error connecting to Redis: {}", err),
@@ -39,11 +38,14 @@ async fn main() {
 
 async fn connect_to_redis() -> redis::RedisResult<String> {
     // TODO error handling
-    
-    // TODO .env
-    let client = redis::Client::open("redis://database:6379/")?;
+
+    let database_host = std::env::var("DATABASE_HOST").expect("DATABASE_HOST not defined");
+    let database_password = std::env::var("DATABASE_PASSWORD").unwrap_or_default();
+
+    let redis_conn_url = format!("redis://:{}@{}", database_password, database_host);
+    let client = redis::Client::open(redis_conn_url)?;
     let mut con = client.get_connection()?;
 
-    con.set("test_key", "Hello from API-Dev")?;
+    con.set("test_key", "Hello from API")?;
     con.get("test_key")
 }
