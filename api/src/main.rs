@@ -2,7 +2,7 @@
 
 use axum::{
     extract::{Path, State},
-    http::StatusCode,
+    http::{HeaderMap, StatusCode},
     routing::{get, patch},
     Json, Router,
 };
@@ -15,32 +15,35 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use redis::{aio::ConnectionManager, streams::StreamAutoClaimOptions, AsyncCommands, Commands};
+use utils::handle_call_rate_limit;
 
 use std::{fmt::Debug, net::SocketAddr};
 
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use rand::seq::SliceRandom;
+
+mod redis_handler;
+mod utils;
 
 #[tokio::main]
 async fn main() {
     dotenvy::dotenv().expect("Unable to load .env file");
 
-    let redis_connection_manager: ConnectionManager = get_redis_connection_manager()
+    let redis_connection_manager: ConnectionManager = utils::get_redis_connection_manager()
         .await
         .expect("Error connecting to Redis");
     println!("Connected to Redis");
 
-    let server_address = std::env::var("BASE_URL").expect("URL_BASE not defined");
-    let listener = TcpListener::bind(server_address).await.unwrap();
+    let listener = TcpListener::bind("0.0.0.0:7878").await.unwrap();
     println!("Listening on: {}", listener.local_addr().unwrap());
 
     let app = Router::new()
         .route("/", get(ping))
-        .route("/session", get(ping).post(create_session))
+        .route("/session", get(does_session_exist).post(create_session))
         .route(
             "/session/:session_name",
-            get(get_session).put(update_session),
+            get(get_session).options(join_session).put(update_session),
         )
         .with_state(redis_connection_manager)
         .layer(SecureClientIpSource::ConnectInfo.into_extension());
@@ -53,71 +56,11 @@ async fn main() {
     .expect("Error serving application");
 }
 
-async fn get_redis_connection_manager() -> Result<redis::aio::ConnectionManager, redis::RedisError>
-{
-    let database_host = std::env::var("DATABASE_HOST").expect("DATABASE_HOST not defined");
-    let database_password = std::env::var("DATABASE_PASSWORD").unwrap_or_default();
-
-    let redis_conn_url = format!("redis://:{}@{}", database_password, database_host);
-    let client = redis::Client::open(redis_conn_url)?;
-
-    let config = redis::aio::ConnectionManagerConfig::new();
-
-    let redis_connection_manager = match ConnectionManager::new_with_config(client, config).await {
-        Ok(m) => m,
-        Err(e) => {
-            println!("Error connecting to Redis: {}", e);
-            return Err(e);
-        }
-    };
-
-    Ok(redis_connection_manager)
-}
-
-const CALL_RATE_LIMIT_SEC: u64 = 1;
-
-async fn handle_call_rate_limit(
-    mut rcm: State<ConnectionManager>,
-    ip: SecureClientIp,
-) -> Result<bool, (StatusCode, String)> {
-    let ref key = format!("call-{}", ip.0.to_string());
-
-    match rcm
-        .get_ex::<&String, String>(&key, redis::Expiry::EX(CALL_RATE_LIMIT_SEC))
-        .await
-    {
-        Ok(_) => Err((
-            StatusCode::TOO_MANY_REQUESTS,
-            json!({
-                "success": false,
-                "message": "rate limit exceeded"
-            })
-            .to_string(),
-        )),
-        Err(_) => {
-            rcm.set_ex::<&String, bool, bool>(&key, true, CALL_RATE_LIMIT_SEC)
-                .await
-                .map_err(|e| {
-                    (
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        json!({
-                            "success": false,
-                            "message": e.to_string()
-                        })
-                        .to_string(),
-                    )
-                })?;
-
-            Ok(true)
-        }
-    }
-}
-
 async fn ping(
     rcm: State<ConnectionManager>,
     secure_ip: SecureClientIp,
 ) -> Result<(StatusCode, String), (StatusCode, String)> {
-    handle_call_rate_limit(rcm, secure_ip).await?;
+    utils::handle_call_rate_limit(rcm, &secure_ip).await?;
 
     let timestamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -134,125 +77,191 @@ async fn ping(
     ))
 }
 
-#[derive(Serialize)]
-struct File {
-    filename: String,
-    size: u64,
-    owner: String,
-}
-
-#[derive(Serialize)]
-struct Session {
-    name: String,
-    timestamp: u128,
-    files: Vec<File>,
-}
-
-async fn get_session(
+async fn does_session_exist(
     rcm: State<ConnectionManager>,
     secure_ip: SecureClientIp,
-    Path(session_name): Path<String>,
+    Json(session_name): Json<String>,
 ) -> Result<(StatusCode, String), (StatusCode, String)> {
-    handle_call_rate_limit(rcm, secure_ip).await?;
+    utils::handle_call_rate_limit(rcm.clone(), &secure_ip).await?;
+
+    let key = format!("session:{}", session_name);
+    let exists = redis_handler::exists(rcm, &key).await?;
 
     Ok((
         StatusCode::OK,
         json!({
             "success": true,
-            "response": session_name
+            "doesSessionExist": exists
         })
         .to_string(),
     ))
 }
 
-async fn get_random_dragon_name(
-    mut rcm: State<ConnectionManager>,
-) -> Result<String, (StatusCode, String)> {
-    let dragon_names = vec![
-        "Smaug",
-        "Drogon",
-        "Slifer",
-        "Tiamat",
-        "Toothless",
-        "Drake",
-        "Dragonite",
-        "Viserion",
-        "Draco",
-        "Falkor",
-        "Saphira",
-        "Mushu",
-        "Diaval",
-        "Haku",
-        "Rhaegal",
-        "Balerion",
-        "Meraxes",
-        "Syrax",
-    ];
+async fn get_session(
+    rcm: State<ConnectionManager>,
+    secure_ip: SecureClientIp,
+    headers: HeaderMap,
+    Path(session_name): Path<String>,
+) -> Result<(StatusCode, String), (StatusCode, String)> {
+    utils::handle_call_rate_limit(rcm.clone(), &secure_ip).await?;
 
-    // first random name
-    let dragon_name = dragon_names.choose(&mut rand::thread_rng()).unwrap_or(&dragon_names[0]).to_string();
-    let key = format!("session-{}", dragon_name);
-
-    if !rcm.exists::<&String, bool>(&key).await.unwrap_or(false) {
-        return Ok(dragon_name);
+    let key = format!("session:{}", session_name);
+    if !redis_handler::exists(rcm, &key).await? {
+        return Err((
+            StatusCode::NOT_FOUND,
+            json!({
+                "success": false,
+                "message": "session name not found"
+            })
+            .to_string(),
+        ));
     }
 
-    rcm.get_ex::<&String, String>(&key, redis::Expiry::EX(CALL_RATE_LIMIT_SEC))
-        .await
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                json!({
-                    "success": false,
-                    "message": e.to_string()
-                })
-                .to_string(),
-            )
-        })?;
-
-    // any name from list
-    for name in dragon_names {
-        let key = format!("session-{}", name);
-        if !rcm.exists::<String, bool>(key).await.unwrap_or(false) {
-            return Ok(name.to_string());
-        }
+    let auth = headers.get("Authorization");
+    if auth.is_none() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            json!({
+                "success": false,
+                "message": "authorization header not found"
+            })
+            .to_string(),
+        ));
     }
 
-    // first random name with counter
-    let mut counter = 1;
-    loop {
-        let nr_key = format!("{}{}", &key, counter);
+    let auth = auth.unwrap().to_str().unwrap();
 
-        if !rcm.exists::<&String, bool>(&nr_key).await.unwrap_or(false) {
-            return Ok(format!("{}{}", &key, counter));
-        }
+    // TODO get session
 
-        counter += 1;
-    }
+    Ok((
+        StatusCode::OK,
+        json!({
+            "success": true,
+            "response": auth
+        })
+        .to_string(),
+    ))
 }
+
+async fn join_session(
+    rcm: State<ConnectionManager>,
+    secure_ip: SecureClientIp,
+    headers: HeaderMap,
+    Path(session_name): Path<String>,
+) -> Result<(StatusCode, String), (StatusCode, String)> {
+    utils::handle_call_rate_limit(rcm.clone(), &secure_ip).await?;
+
+    let key = format!("session:{}", session_name);
+    if !redis_handler::exists(rcm, &key).await? {
+        return Err((
+            StatusCode::NOT_FOUND,
+            json!({
+                "success": false,
+                "message": "session name not found"
+            })
+            .to_string(),
+        ));
+    }
+
+    let auth = headers.get("Authorization");
+    if auth.is_none() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            json!({
+                "success": false,
+                "message": "authorization header not found"
+            })
+            .to_string(),
+        ));
+    }
+
+    let auth = auth.unwrap().to_str().unwrap();
+
+    // TODO generate access token
+
+    Ok((
+        StatusCode::OK,
+        json!({
+            "success": true,
+            "response": auth
+        })
+        .to_string(),
+    ))
+}
+
+#[derive(Deserialize)]
+struct FileReq {
+    name: String,
+    size: u64,
+}
+
+// #[derive(Serialize)]
+// struct File {
+//     name: String,
+//     size: u64,
+//     owner_ip: String,
+// }
+
+// #[derive(Serialize)]
+// struct Session {
+//     name: String,
+//     owner_ip: String,
+//     files: Vec<File>,
+// }
 
 async fn create_session(
     rcm: State<ConnectionManager>,
     secure_ip: SecureClientIp,
+    Json(file_metadata): Json<Vec<FileReq>>,
 ) -> Result<(StatusCode, String), (StatusCode, String)> {
-    handle_call_rate_limit(rcm.clone(), secure_ip).await?;
+    utils::handle_call_rate_limit(rcm.clone(), &secure_ip).await?;
 
-    let name = get_random_dragon_name(rcm).await?;
+    let session_name = utils::get_random_dragon_name(rcm.clone()).await?;
 
-    let session = Session {
-        name: name.clone(),
-        timestamp: SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_millis(),
-        files: vec![],
-    };
+    // TODO save file metadata
+
+    let access_token = utils::get_random_access_token();
+    let access_code = utils::get_random_six_digit_code();
+    let uuid = utils::get_uuid();
+    let encrypetd_token = utils::sha256(&access_token);
+    let encrypetd_code = utils::sha256(&access_code);
+
+    let items = [
+        ("code", encrypetd_code.as_str()),
+        ("owner.id", uuid.as_str()),
+    ];
+
+    let session_key = format!("session:{}", session_name);
+    redis_handler::hset_multiple(rcm.clone(), &session_key, &items, None).await?;
+
+    let token_key = format!("session:{}:{}", encrypetd_token, uuid);
+    redis_handler::set(rcm.clone(), &token_key, encrypetd_token.as_str(), None).await?;
+
+    for file in file_metadata {
+        let session_file_key = format!("files:{}", session_name);
+        redis_handler::set(rcm.clone(), &session_file_key, file.name.as_str(), None).await?;
+
+        let file_key = format!("file:{}:{}", session_name, file.name);
+
+        let size_string = file.size.to_string();
+        let items = [
+            ("name", file.name.as_str()),
+            ("size", size_string.as_str()),
+            ("owner.id", uuid.as_str()),
+        ];
+        redis_handler::hset_multiple(rcm.clone(), &file_key, &items, None).await?;
+    }
 
     Ok((
         StatusCode::CREATED,
         json!({
             "success": true,
-            "response": session
+            "response": {
+                "sessionName": session_name,
+                "token": access_token,
+                "code": access_code,
+                "uuid": uuid,
+            }
         })
         .to_string(),
     ))
@@ -263,7 +272,7 @@ async fn update_session(
     secure_ip: SecureClientIp,
     Path(session_name): Path<String>,
 ) -> Result<(StatusCode, String), (StatusCode, String)> {
-    handle_call_rate_limit(rcm, secure_ip).await?;
+    utils::handle_call_rate_limit(rcm, &secure_ip).await?;
 
     Ok((
         StatusCode::OK,
