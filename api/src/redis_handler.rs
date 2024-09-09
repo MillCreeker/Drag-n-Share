@@ -4,13 +4,13 @@ use redis::{aio::ConnectionManager, AsyncCommands, Commands};
 
 use serde_json::json;
 
-const EXPIRATION_TIME: i64 = 3600; // 5min
+const EXPIRATION_TIME: i64 = 3000; // TODO 5min
 
 pub async fn expire(
     mut rcm: State<ConnectionManager>,
     ref key: &str,
     seconds: i64,
-) -> Result<bool, (StatusCode, String)> {
+) -> Result<(), (StatusCode, String)> {
     rcm.expire(&key, seconds).await.map_err(|_| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -22,7 +22,7 @@ pub async fn expire(
         )
     })?;
 
-    Ok(true)
+    Ok(())
 }
 
 pub async fn exists(
@@ -47,7 +47,7 @@ pub async fn set(
     ref key: &str,
     ref val: &str,
     expiration_time: Option<i64>,
-) -> Result<bool, (StatusCode, String)> {
+) -> Result<(), (StatusCode, String)> {
     let expiration_time = expiration_time.unwrap_or(EXPIRATION_TIME) as u64;
 
     rcm.set_ex::<&str, &str, bool>(&key, &val, expiration_time)
@@ -63,7 +63,7 @@ pub async fn set(
             )
         })?;
 
-    Ok(true)
+    Ok(())
 }
 
 pub async fn get(
@@ -88,7 +88,7 @@ pub async fn sadd(
     ref key: &str,
     ref val: &str,
     expiration_time: Option<i64>,
-) -> Result<bool, (StatusCode, String)> {
+) -> Result<(), (StatusCode, String)> {
     rcm.sadd(&key, &val).await.map_err(|_| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -102,7 +102,7 @@ pub async fn sadd(
 
     expire(rcm, &key, expiration_time.unwrap_or(EXPIRATION_TIME)).await?;
 
-    Ok(true)
+    Ok(())
 }
 
 pub async fn sismember(
@@ -123,12 +123,29 @@ pub async fn sismember(
     }
 }
 
+pub async fn smembers(
+    mut rcm: State<ConnectionManager>,
+    ref key: &str,
+) -> Result<Vec<String>, (StatusCode, String)> {
+    match rcm.smembers(&key).await {
+        Ok(v) => Ok(v),
+        Err(_) => Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            json!({
+                "success": false,
+                "message": "error connection to database"
+            })
+            .to_string(),
+        )),
+    }
+}
+
 pub async fn hset_multiple(
     mut rcm: State<ConnectionManager>,
     ref key: &str,
     ref items: &[(&str, &str)],
     expiration_time: Option<i64>,
-) -> Result<bool, (StatusCode, String)> {
+) -> Result<(), (StatusCode, String)> {
     rcm.hset_multiple(&key, &items).await.map_err(|_| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -142,5 +159,22 @@ pub async fn hset_multiple(
 
     expire(rcm, &key, expiration_time.unwrap_or(EXPIRATION_TIME)).await?;
 
-    Ok(true)
+    Ok(())
+}
+
+pub async fn hgetall(
+    mut rcm: State<ConnectionManager>,
+    ref key: &str,
+) -> Result<Vec<String>, (StatusCode, String)> {
+    match rcm.hgetall(&key).await {
+        Ok(v) => Ok(v),
+        Err(_) => Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            json!({
+                "success": false,
+                "message": "error connection to database"
+            })
+            .to_string(),
+        )),
+    }
 }

@@ -1,4 +1,7 @@
-use axum::{extract::State, http::StatusCode};
+use axum::{
+    extract::State,
+    http::{HeaderMap, StatusCode},
+};
 use axum_client_ip::SecureClientIp;
 use rand::seq::SliceRandom;
 use redis::aio::ConnectionManager;
@@ -37,7 +40,7 @@ const CALL_RATE_LIMIT_SEC: i64 = 1;
 pub async fn handle_call_rate_limit(
     rcm: State<ConnectionManager>,
     ref ip: &SecureClientIp,
-) -> Result<bool, (StatusCode, String)> {
+) -> Result<(), (StatusCode, String)> {
     let ip = ip.0.to_string();
 
     if redis_handler::sismember(rcm.clone(), "calls", &ip).await? {
@@ -53,7 +56,58 @@ pub async fn handle_call_rate_limit(
 
     redis_handler::sadd(rcm.clone(), "calls", &ip, Some(CALL_RATE_LIMIT_SEC)).await?;
 
-    Ok(true)
+    Ok(())
+}
+
+pub async fn check_session_exists(
+    rcm: State<ConnectionManager>,
+    ref session_name: &str,
+) -> Result<(), (StatusCode, String)> {
+    let key = format!("session:{}", session_name);
+
+    if !redis_handler::exists(rcm.clone(), &key).await? {
+        return Err((
+            StatusCode::NOT_FOUND,
+            json!({
+                "success": false,
+                "message": "session name not found"
+            })
+            .to_string(),
+        ));
+    }
+
+    Ok(())
+}
+
+pub async fn check_is_user_authorized(
+    rcm: State<ConnectionManager>,
+    ref headers: &HeaderMap,
+    ref session_name: &str,
+) -> Result<(), (StatusCode, String)> {
+    let auth = get_header(&headers, "authorization")?;
+
+    // TODO auslagern
+    let auth_parts = auth.split(" ");
+    let token = auth_parts.last().unwrap(); // without "Bearer "
+    let encrypted_token = sha256(token);
+
+    let user = get_header(&headers, "user-agent")?;
+
+    let token_key = format!("session:{}:{}", session_name, user);
+
+    let actual_token = redis_handler::get(rcm, &token_key).await?;
+    if actual_token != encrypted_token {
+        return Err((
+            StatusCode::UNAUTHORIZED,
+            json!({
+                "success": false,
+                "message": "bearer token invalid"
+            })
+            .to_string(),
+        ));
+    }
+
+    Ok(())
 }
 
 pub async fn get_random_dragon_name(
@@ -121,6 +175,23 @@ pub async fn get_random_dragon_name(
     }
 }
 
+pub fn get_header(ref headers: &HeaderMap, key: &str) -> Result<String, (StatusCode, String)> {
+    let header = headers.get("Authorization");
+    if header.is_none() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            json!({
+                "success": false,
+                "message": format!("{} header not found", key)
+            })
+            .to_string(),
+        ));
+    }
+
+    let header = header.unwrap().to_str().unwrap();
+    Ok(header.to_string())
+}
+
 pub fn get_random_six_digit_code() -> String {
     let code = rand::thread_rng().gen_range(1..999999);
     let code_str = format!("{:06}", code);
@@ -129,8 +200,12 @@ pub fn get_random_six_digit_code() -> String {
 }
 
 pub fn get_random_access_token() -> String {
-    let chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890".chars().collect::<Vec<char>>();
-    let random_string: String = (0..255).map(|_| chars[rand::thread_rng().gen_range(0..chars.len())]).collect();
+    let chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890"
+        .chars()
+        .collect::<Vec<char>>();
+    let random_string: String = (0..255)
+        .map(|_| chars[rand::thread_rng().gen_range(0..chars.len())])
+        .collect();
 
     random_string
 }

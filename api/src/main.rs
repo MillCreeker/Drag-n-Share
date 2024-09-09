@@ -17,7 +17,10 @@ use serde_json::json;
 use redis::{aio::ConnectionManager, streams::StreamAutoClaimOptions, AsyncCommands, Commands};
 use utils::handle_call_rate_limit;
 
-use std::{fmt::Debug, net::SocketAddr};
+use std::{
+    fmt::{format, Debug},
+    net::SocketAddr,
+};
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -43,7 +46,13 @@ async fn main() {
         .route("/session", get(does_session_exist).post(create_session))
         .route(
             "/session/:session_name",
-            get(get_session).options(join_session).put(update_session),
+            get(get_files_metadata)
+                .options(join_session)
+                .delete(delete_session),
+        )
+        .route(
+            "/session/:session_name/:file_name",
+            get(get_file_metadata).post(add_file).delete(remove_file),
         )
         .with_state(redis_connection_manager)
         .layer(SecureClientIpSource::ConnectInfo.into_extension());
@@ -97,47 +106,45 @@ async fn does_session_exist(
     ))
 }
 
-async fn get_session(
+#[derive(Serialize)]
+struct File {
+    name: String,
+    size: u64,
+    owner_id: String,
+}
+
+async fn get_files_metadata(
     rcm: State<ConnectionManager>,
     secure_ip: SecureClientIp,
     headers: HeaderMap,
     Path(session_name): Path<String>,
 ) -> Result<(StatusCode, String), (StatusCode, String)> {
     utils::handle_call_rate_limit(rcm.clone(), &secure_ip).await?;
+    utils::check_session_exists(rcm.clone(), &session_name).await?;
 
-    let key = format!("session:{}", session_name);
-    if !redis_handler::exists(rcm, &key).await? {
-        return Err((
-            StatusCode::NOT_FOUND,
-            json!({
-                "success": false,
-                "message": "session name not found"
-            })
-            .to_string(),
-        ));
+    utils::check_is_user_authorized(rcm.clone(), &headers, &session_name).await?;
+
+    let file_set_key = format!("files:{}", session_name);
+    let files = redis_handler::smembers(rcm.clone(), &file_set_key).await?;
+
+    let mut file_metadata: Vec<File> = vec![];
+
+    for file in files {
+        let file_key = format!("file:{}:{}", session_name, file);
+
+        let metadata = redis_handler::hgetall(rcm.clone(), &file_key).await?;
+        file_metadata.push(File {
+            name: file,
+            size: metadata[3].parse::<u64>().unwrap_or(0),
+            owner_id: metadata[5].to_string(),
+        });
     }
-
-    let auth = headers.get("Authorization");
-    if auth.is_none() {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            json!({
-                "success": false,
-                "message": "authorization header not found"
-            })
-            .to_string(),
-        ));
-    }
-
-    let auth = auth.unwrap().to_str().unwrap();
-
-    // TODO get session
 
     Ok((
         StatusCode::OK,
         json!({
             "success": true,
-            "response": auth
+            "response": file_metadata
         })
         .to_string(),
     ))
@@ -150,40 +157,42 @@ async fn join_session(
     Path(session_name): Path<String>,
 ) -> Result<(StatusCode, String), (StatusCode, String)> {
     utils::handle_call_rate_limit(rcm.clone(), &secure_ip).await?;
+    utils::check_session_exists(rcm.clone(), &session_name).await?;
+
+    let auth = utils::get_header(&headers, "authorization")?;
+
+    let encr_code = utils::sha256(auth.as_str());
 
     let key = format!("session:{}", session_name);
-    if !redis_handler::exists(rcm, &key).await? {
+    let ret = redis_handler::hgetall(rcm.clone(), &key).await?;
+
+    let actual_code = ret[1].clone();
+    if actual_code != encr_code {
         return Err((
-            StatusCode::NOT_FOUND,
+            StatusCode::UNAUTHORIZED,
             json!({
                 "success": false,
-                "message": "session name not found"
+                "message": "authorization code invalid"
             })
             .to_string(),
         ));
     }
 
-    let auth = headers.get("Authorization");
-    if auth.is_none() {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            json!({
-                "success": false,
-                "message": "authorization header not found"
-            })
-            .to_string(),
-        ));
-    }
+    let uuid = utils::get_uuid();
+    let token = utils::get_random_access_token();
+    let encrypetd_token = utils::sha256(&token);
 
-    let auth = auth.unwrap().to_str().unwrap();
-
-    // TODO generate access token
+    let token_key = format!("session:{}:{}", session_name, uuid);
+    redis_handler::set(rcm, &token_key, encrypetd_token.as_str(), None).await?;
 
     Ok((
         StatusCode::OK,
         json!({
             "success": true,
-            "response": auth
+            "response": {
+                "uuid": uuid,
+                "token": token,
+            }
         })
         .to_string(),
     ))
@@ -195,20 +204,6 @@ struct FileReq {
     size: u64,
 }
 
-// #[derive(Serialize)]
-// struct File {
-//     name: String,
-//     size: u64,
-//     owner_ip: String,
-// }
-
-// #[derive(Serialize)]
-// struct Session {
-//     name: String,
-//     owner_ip: String,
-//     files: Vec<File>,
-// }
-
 async fn create_session(
     rcm: State<ConnectionManager>,
     secure_ip: SecureClientIp,
@@ -217,8 +212,6 @@ async fn create_session(
     utils::handle_call_rate_limit(rcm.clone(), &secure_ip).await?;
 
     let session_name = utils::get_random_dragon_name(rcm.clone()).await?;
-
-    // TODO save file metadata
 
     let access_token = utils::get_random_access_token();
     let access_code = utils::get_random_six_digit_code();
@@ -234,12 +227,12 @@ async fn create_session(
     let session_key = format!("session:{}", session_name);
     redis_handler::hset_multiple(rcm.clone(), &session_key, &items, None).await?;
 
-    let token_key = format!("session:{}:{}", encrypetd_token, uuid);
+    let token_key = format!("session:{}:{}", session_name, uuid);
     redis_handler::set(rcm.clone(), &token_key, encrypetd_token.as_str(), None).await?;
 
     for file in file_metadata {
         let session_file_key = format!("files:{}", session_name);
-        redis_handler::set(rcm.clone(), &session_file_key, file.name.as_str(), None).await?;
+        redis_handler::sadd(rcm.clone(), &session_file_key, file.name.as_str(), None).await?;
 
         let file_key = format!("file:{}:{}", session_name, file.name);
 
@@ -258,16 +251,71 @@ async fn create_session(
             "success": true,
             "response": {
                 "sessionName": session_name,
+                "uuid": uuid,
                 "token": access_token,
                 "code": access_code,
-                "uuid": uuid,
             }
         })
         .to_string(),
     ))
 }
 
-async fn update_session(
+// TODO
+async fn delete_session(
+    rcm: State<ConnectionManager>,
+    secure_ip: SecureClientIp,
+    Path(session_name): Path<String>,
+) -> Result<(StatusCode, String), (StatusCode, String)> {
+    utils::handle_call_rate_limit(rcm, &secure_ip).await?;
+
+    Ok((
+        StatusCode::OK,
+        json!({
+            "success": true,
+            "response": session_name
+        })
+        .to_string(),
+    ))
+}
+
+// TODO
+async fn get_file_metadata(
+    rcm: State<ConnectionManager>,
+    secure_ip: SecureClientIp,
+    Path(session_name): Path<String>,
+) -> Result<(StatusCode, String), (StatusCode, String)> {
+    utils::handle_call_rate_limit(rcm, &secure_ip).await?;
+
+    Ok((
+        StatusCode::OK,
+        json!({
+            "success": true,
+            "response": session_name
+        })
+        .to_string(),
+    ))
+}
+
+// TODO
+async fn add_file(
+    rcm: State<ConnectionManager>,
+    secure_ip: SecureClientIp,
+    Path(session_name): Path<String>,
+) -> Result<(StatusCode, String), (StatusCode, String)> {
+    utils::handle_call_rate_limit(rcm, &secure_ip).await?;
+
+    Ok((
+        StatusCode::OK,
+        json!({
+            "success": true,
+            "response": session_name
+        })
+        .to_string(),
+    ))
+}
+
+// TODO
+async fn remove_file(
     rcm: State<ConnectionManager>,
     secure_ip: SecureClientIp,
     Path(session_name): Path<String>,
