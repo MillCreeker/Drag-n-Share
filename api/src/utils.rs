@@ -6,7 +6,10 @@ use axum_client_ip::SecureClientIp;
 use rand::seq::SliceRandom;
 use redis::aio::ConnectionManager;
 
+use serde::{Deserialize, Serialize};
 use serde_json::json;
+
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::redis_handler;
 
@@ -14,6 +17,8 @@ use rand::Rng;
 use sha256::digest;
 
 use uuid::Uuid;
+
+use jsonwebtoken::{self, EncodingKey};
 
 pub async fn get_redis_connection_manager(
 ) -> Result<redis::aio::ConnectionManager, redis::RedisError> {
@@ -61,47 +66,16 @@ pub async fn handle_call_rate_limit(
 
 pub async fn check_session_exists(
     rcm: State<ConnectionManager>,
-    ref session_name: &str,
+    ref session_id: &str,
 ) -> Result<(), (StatusCode, String)> {
-    let key = format!("session:{}", session_name);
+    let key = format!("session:{}", session_id);
 
     if !redis_handler::exists(rcm.clone(), &key).await? {
         return Err((
             StatusCode::NOT_FOUND,
             json!({
                 "success": false,
-                "message": "session name not found"
-            })
-            .to_string(),
-        ));
-    }
-
-    Ok(())
-}
-
-pub async fn check_is_user_authorized(
-    rcm: State<ConnectionManager>,
-    ref headers: &HeaderMap,
-    ref session_name: &str,
-) -> Result<(), (StatusCode, String)> {
-    let auth = get_header(&headers, "authorization")?;
-
-    // TODO auslagern
-    let auth_parts = auth.split(" ");
-    let token = auth_parts.last().unwrap(); // without "Bearer "
-    let encrypted_token = sha256(token);
-
-    let user = get_header(&headers, "user-agent")?;
-
-    let token_key = format!("session:{}:{}", session_name, user);
-
-    let actual_token = redis_handler::get(rcm, &token_key).await?;
-    if actual_token != encrypted_token {
-        return Err((
-            StatusCode::UNAUTHORIZED,
-            json!({
-                "success": false,
-                "message": "bearer token invalid"
+                "message": "session id not found"
             })
             .to_string(),
         ));
@@ -141,20 +115,14 @@ pub async fn get_random_dragon_name(
         .to_string();
     let key = format!("session:{}", dragon_name);
 
-    if !redis_handler::exists(rcm.clone(), &key)
-        .await
-        .unwrap_or(false)
-    {
+    if !redis_handler::exists(rcm.clone(), &key).await? {
         return Ok(dragon_name);
     }
 
     // any name from list
     for name in dragon_names {
         let key = format!("session:{}", name);
-        if !redis_handler::exists(rcm.clone(), &key)
-            .await
-            .unwrap_or(false)
-        {
+        if !redis_handler::exists(rcm.clone(), &key).await? {
             return Ok(name.to_string());
         }
     }
@@ -162,17 +130,161 @@ pub async fn get_random_dragon_name(
     // first random name with counter
     let mut counter = 1;
     loop {
-        let nr_key = format!("{}{}", &key, counter);
+        let nr_key = format!("session:{}{}", &dragon_name, counter);
 
-        if !redis_handler::exists(rcm.clone(), &nr_key)
-            .await
-            .unwrap_or(false)
-        {
-            return Ok(format!("{}{}", &key, counter));
+        if !redis_handler::exists(rcm.clone(), &nr_key).await? {
+            return Ok(format!("{}{}", &dragon_name, counter));
         }
 
         counter += 1;
     }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct Claims {
+    aud: String,
+    sub: String,
+    iat: u128,
+    is_host: bool,
+}
+
+pub fn create_jwt(
+    ref session_id: &str,
+    ref user_id: Option<&str>,
+) -> Result<String, (StatusCode, String)> {
+    let jwt_key = std::env::var("JWT_KEY").unwrap_or_default();
+
+    let key = EncodingKey::from_secret(jwt_key.as_ref());
+    let header = jsonwebtoken::Header::new(jsonwebtoken::Algorithm::HS256);
+    let claims = Claims {
+        aud: session_id.to_string(),
+        sub: user_id.unwrap_or(&get_uuid()).to_string(),
+        iat: get_current_timestamp(),
+        is_host: !user_id.is_none(),
+    };
+
+    match jsonwebtoken::encode(&header, &claims, &key) {
+        Ok(token) => Ok(token),
+        Err(_) => {
+            return Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                json!({
+                    "success": false,
+                    "response": "failed to create jwt"
+                })
+                .to_string(),
+            ))
+        }
+    }
+}
+
+const JWT_EXPIRATION_TIME: u128 = 5 * 60 * 1000; // 5 minutes
+
+pub fn decode_jwt(ref jwt: &str) -> Result<Claims, (StatusCode, String)> {
+    let jwt_key = std::env::var("JWT_KEY").map_err(|_| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            json!({
+                "success": false,
+                "response": "failed to locate jwt key"
+            })
+            .to_string(),
+        )
+    })?;
+
+    let key = jsonwebtoken::DecodingKey::from_secret(jwt_key.as_ref());
+
+    let decoded_jwt = jsonwebtoken::decode::<Claims>(
+        &jwt,
+        &key,
+        &jsonwebtoken::Validation::new(jsonwebtoken::Algorithm::HS256),
+    )
+    .map_err(|_| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            json!({
+                "success": false,
+                "response": "failed to decode jwt"
+            })
+            .to_string(),
+        )
+    })?;
+
+    let claims = decoded_jwt.claims;
+    let now = get_current_timestamp();
+
+    if (now - claims.iat) > JWT_EXPIRATION_TIME {
+        return Err((
+            StatusCode::UNAUTHORIZED,
+            json!({
+                "success": false,
+                "response": "jwt expired"
+            })
+            .to_string(),
+        ));
+    }
+
+    Ok(claims)
+}
+
+pub fn check_user_is_host(
+    ref headers: &HeaderMap,
+    session_id: &str,
+) -> Result<(), (StatusCode, String)> {
+    let jwt = get_header(&headers, "authorization")?;
+    let claims = decode_jwt(&jwt)?;
+
+    if claims.aud != session_id {
+        return Err((
+            StatusCode::UNAUTHORIZED,
+            json!({
+                "success": false,
+                "message": "invalid session id"
+            })
+            .to_string(),
+        ));
+    }
+
+    if !claims.is_host {
+        return Err((
+            StatusCode::UNAUTHORIZED,
+            json!({
+                "success": false,
+                "message": "permission denied"
+            })
+            .to_string(),
+        ));
+    }
+
+    Ok(())
+}
+
+pub fn get_current_timestamp() -> u128 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_millis()
+}
+
+pub fn check_user_is_in_session(
+    ref headers: &HeaderMap,
+    session_id: &str,
+) -> Result<String, (StatusCode, String)> {
+    let jwt = get_header(&headers, "authorization")?;
+    let claims = decode_jwt(&jwt)?;
+
+    if claims.aud != session_id {
+        return Err((
+            StatusCode::UNAUTHORIZED,
+            json!({
+                "success": false,
+                "message": "invalid session id"
+            })
+            .to_string(),
+        ));
+    }
+
+    Ok(claims.sub)
 }
 
 pub fn get_header(ref headers: &HeaderMap, key: &str) -> Result<String, (StatusCode, String)> {
@@ -197,17 +309,6 @@ pub fn get_random_six_digit_code() -> String {
     let code_str = format!("{:06}", code);
 
     code_str
-}
-
-pub fn get_random_access_token() -> String {
-    let chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890"
-        .chars()
-        .collect::<Vec<char>>();
-    let random_string: String = (0..255)
-        .map(|_| chars[rand::thread_rng().gen_range(0..chars.len())])
-        .collect();
-
-    random_string
 }
 
 pub fn sha256(s: &str) -> String {

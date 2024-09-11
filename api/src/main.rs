@@ -1,9 +1,7 @@
-#![allow(unused_imports)] // TODO delete
-
 use axum::{
     extract::{Path, State},
     http::{HeaderMap, StatusCode},
-    routing::{get, patch},
+    routing::get,
     Json, Router,
 };
 
@@ -14,17 +12,9 @@ use axum_client_ip::{SecureClientIp, SecureClientIpSource};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
-use redis::{aio::ConnectionManager, streams::StreamAutoClaimOptions, AsyncCommands, Commands};
-use utils::handle_call_rate_limit;
+use redis::aio::ConnectionManager;
 
-use std::{
-    fmt::{format, Debug},
-    net::SocketAddr,
-};
-
-use std::time::{SystemTime, UNIX_EPOCH};
-
-use rand::seq::SliceRandom;
+use std::net::SocketAddr;
 
 mod redis_handler;
 mod utils;
@@ -43,16 +33,21 @@ async fn main() {
 
     let app = Router::new()
         .route("/", get(ping))
-        .route("/session", get(does_session_exist).post(create_session))
+        .route("/session", get(ping).post(create_session))
         .route(
-            "/session/:session_name",
-            get(get_files_metadata)
+            "/session/:session_id",
+            get(get_id_for_session_name)
                 .options(join_session)
+                .put(update_session)
                 .delete(delete_session),
         )
         .route(
-            "/session/:session_name/:file_name",
-            get(get_file_metadata).post(add_file).delete(remove_file),
+            "/files/:session_id",
+            get(get_all_file_metadata_in_session).post(add_file),
+        )
+        .route(
+            "/files/:session_id/:file_name",
+            get(get_file_metadata).delete(delete_file),
         )
         .with_state(redis_connection_manager)
         .layer(SecureClientIpSource::ConnectInfo.into_extension());
@@ -71,10 +66,7 @@ async fn ping(
 ) -> Result<(StatusCode, String), (StatusCode, String)> {
     utils::handle_call_rate_limit(rcm, &secure_ip).await?;
 
-    let timestamp = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_millis();
+    let timestamp = utils::get_current_timestamp();
 
     Ok((
         StatusCode::OK,
@@ -86,65 +78,59 @@ async fn ping(
     ))
 }
 
-async fn does_session_exist(
+async fn create_session(
     rcm: State<ConnectionManager>,
     secure_ip: SecureClientIp,
-    Json(session_name): Json<String>,
 ) -> Result<(StatusCode, String), (StatusCode, String)> {
     utils::handle_call_rate_limit(rcm.clone(), &secure_ip).await?;
 
+    let session_name = utils::get_random_dragon_name(rcm.clone()).await?;
+    let session_id = utils::get_uuid();
+    let user_id = utils::get_uuid();
+    let jwt = utils::create_jwt(&session_id, Some(&user_id))?;
+
+    let code = utils::get_random_six_digit_code();
+    let encrypted_code = utils::sha256(&code);
+
     let key = format!("session:{}", session_name);
-    let exists = redis_handler::exists(rcm, &key).await?;
+    redis_handler::set(rcm.clone(), &key, &session_id, None).await?;
+
+    let key = format!("session:{}", session_id);
+    let items = [("name", session_name.as_str()), ("code", &encrypted_code)];
+    redis_handler::hset_multiple(rcm, &key, &items, None).await?;
 
     Ok((
-        StatusCode::OK,
+        StatusCode::CREATED,
         json!({
             "success": true,
-            "doesSessionExist": exists
+            "response": {
+                "sessionName": session_name,
+                "sessionId": session_id,
+                "accessCode": code,
+                "JWT": jwt
+            }
         })
         .to_string(),
     ))
 }
 
-#[derive(Serialize)]
-struct File {
-    name: String,
-    size: u64,
-    owner_id: String,
-}
-
-async fn get_files_metadata(
+async fn get_id_for_session_name(
     rcm: State<ConnectionManager>,
     secure_ip: SecureClientIp,
-    headers: HeaderMap,
-    Path(session_name): Path<String>,
+    Path(session_id): Path<String>,
 ) -> Result<(StatusCode, String), (StatusCode, String)> {
     utils::handle_call_rate_limit(rcm.clone(), &secure_ip).await?;
-    utils::check_session_exists(rcm.clone(), &session_name).await?;
 
-    utils::check_is_user_authorized(rcm.clone(), &headers, &session_name).await?;
-
-    let file_set_key = format!("files:{}", session_name);
-    let files = redis_handler::smembers(rcm.clone(), &file_set_key).await?;
-
-    let mut file_metadata: Vec<File> = vec![];
-
-    for file in files {
-        let file_key = format!("file:{}:{}", session_name, file);
-
-        let metadata = redis_handler::hgetall(rcm.clone(), &file_key).await?;
-        file_metadata.push(File {
-            name: file,
-            size: metadata[3].parse::<u64>().unwrap_or(0),
-            owner_id: metadata[5].to_string(),
-        });
-    }
+    let key = format!("session:{}", session_id);
+    let session_id = redis_handler::get(rcm, &key).await?;
 
     Ok((
-        StatusCode::OK,
+        StatusCode::CREATED,
         json!({
             "success": true,
-            "response": file_metadata
+            "response": {
+                "sessionId": session_id,
+            }
         })
         .to_string(),
     ))
@@ -154,44 +140,49 @@ async fn join_session(
     rcm: State<ConnectionManager>,
     secure_ip: SecureClientIp,
     headers: HeaderMap,
-    Path(session_name): Path<String>,
+    Path(session_id): Path<String>,
 ) -> Result<(StatusCode, String), (StatusCode, String)> {
     utils::handle_call_rate_limit(rcm.clone(), &secure_ip).await?;
-    utils::check_session_exists(rcm.clone(), &session_name).await?;
+    utils::check_session_exists(rcm.clone(), &session_id).await?;
 
-    let auth = utils::get_header(&headers, "authorization")?;
-
-    let encr_code = utils::sha256(auth.as_str());
-
-    let key = format!("session:{}", session_name);
-    let ret = redis_handler::hgetall(rcm.clone(), &key).await?;
-
-    let actual_code = ret[1].clone();
-    if actual_code != encr_code {
+    let key = format!("access.attempts:{}:{}", session_id, secure_ip.0);
+    if redis_handler::get(rcm.clone(), &key).await? == "5" {
         return Err((
-            StatusCode::UNAUTHORIZED,
+            StatusCode::TOO_MANY_REQUESTS,
             json!({
                 "success": false,
-                "message": "authorization code invalid"
+                "message": "too many attempts"
             })
             .to_string(),
         ));
     }
 
-    let uuid = utils::get_uuid();
-    let token = utils::get_random_access_token();
-    let encrypetd_token = utils::sha256(&token);
+    let encrypted_code = utils::get_header(&headers, "authorization")?;
 
-    let token_key = format!("session:{}:{}", session_name, uuid);
-    redis_handler::set(rcm, &token_key, encrypetd_token.as_str(), None).await?;
+    let key = format!("session:{}", session_id);
+    let code = redis_handler::hget(rcm.clone(), &key, "code").await?;
+
+    if encrypted_code != code {
+        redis_handler::incr(rcm, &key, Some(10)).await?;
+
+        return Err((
+            StatusCode::UNAUTHORIZED,
+            json!({
+                "success": false,
+                "message": "invalid access code"
+            })
+            .to_string(),
+        ));
+    }
+
+    let jwt = utils::create_jwt(&session_id, None)?;
 
     Ok((
         StatusCode::OK,
         json!({
             "success": true,
             "response": {
-                "uuid": uuid,
-                "token": token,
+                "jwt": jwt
             }
         })
         .to_string(),
@@ -199,134 +190,296 @@ async fn join_session(
 }
 
 #[derive(Deserialize)]
-struct FileReq {
+struct SessionNameBody {
     name: String,
-    size: u64,
 }
 
-async fn create_session(
+async fn update_session(
     rcm: State<ConnectionManager>,
     secure_ip: SecureClientIp,
-    Json(file_metadata): Json<Vec<FileReq>>,
+    headers: HeaderMap,
+    Path(session_id): Path<String>,
+    Json(session_name_body): Json<SessionNameBody>,
 ) -> Result<(StatusCode, String), (StatusCode, String)> {
     utils::handle_call_rate_limit(rcm.clone(), &secure_ip).await?;
+    utils::check_session_exists(rcm.clone(), &session_id).await?;
 
-    let session_name = utils::get_random_dragon_name(rcm.clone()).await?;
+    utils::check_user_is_host(&headers, &session_id)?;
 
-    let access_token = utils::get_random_access_token();
-    let access_code = utils::get_random_six_digit_code();
-    let uuid = utils::get_uuid();
-    let encrypetd_token = utils::sha256(&access_token);
-    let encrypetd_code = utils::sha256(&access_code);
+    let key = format!("session:{}", session_id);
+    let old_session_name = redis_handler::hget(rcm.clone(), &key, "name").await?;
 
+    let code = utils::get_random_six_digit_code();
+    let encrypted_code = utils::sha256(&code);
+
+    let new_name = session_name_body.name;
     let items = [
-        ("code", encrypetd_code.as_str()),
-        ("owner.id", uuid.as_str()),
+        ("name", new_name.as_str()),
+        ("code", encrypted_code.as_str()),
     ];
+    redis_handler::hset_multiple(rcm.clone(), &key, &items, None).await?;
 
-    let session_key = format!("session:{}", session_name);
-    redis_handler::hset_multiple(rcm.clone(), &session_key, &items, None).await?;
+    let key = format!("session:{}", old_session_name);
+    redis_handler::del(rcm.clone(), &key).await?;
 
-    let token_key = format!("session:{}:{}", session_name, uuid);
-    redis_handler::set(rcm.clone(), &token_key, encrypetd_token.as_str(), None).await?;
-
-    for file in file_metadata {
-        let session_file_key = format!("files:{}", session_name);
-        redis_handler::sadd(rcm.clone(), &session_file_key, file.name.as_str(), None).await?;
-
-        let file_key = format!("file:{}:{}", session_name, file.name);
-
-        let size_string = file.size.to_string();
-        let items = [
-            ("name", file.name.as_str()),
-            ("size", size_string.as_str()),
-            ("owner.id", uuid.as_str()),
-        ];
-        redis_handler::hset_multiple(rcm.clone(), &file_key, &items, None).await?;
-    }
+    let key = format!("session:{}", &new_name);
+    redis_handler::set(rcm, &key, &session_id, None).await?;
 
     Ok((
-        StatusCode::CREATED,
+        StatusCode::OK,
         json!({
             "success": true,
             "response": {
-                "sessionName": session_name,
-                "uuid": uuid,
-                "token": access_token,
-                "code": access_code,
+                "accessCode": code
             }
         })
         .to_string(),
     ))
 }
 
-// TODO
 async fn delete_session(
     rcm: State<ConnectionManager>,
     secure_ip: SecureClientIp,
-    Path(session_name): Path<String>,
+    headers: HeaderMap,
+    Path(session_id): Path<String>,
 ) -> Result<(StatusCode, String), (StatusCode, String)> {
-    utils::handle_call_rate_limit(rcm, &secure_ip).await?;
+    utils::handle_call_rate_limit(rcm.clone(), &secure_ip).await?;
+    utils::check_session_exists(rcm.clone(), &session_id).await?;
+
+    utils::check_user_is_host(&headers, &session_id)?;
+
+    let key = format!("session:{}", session_id);
+    let session_name = redis_handler::hget(rcm.clone(), &key, "name").await?;
+    redis_handler::del(rcm.clone(), &key).await?;
+
+    let key = format!("session:{}", session_name);
+    redis_handler::del(rcm, &key).await?;
 
     Ok((
         StatusCode::OK,
         json!({
             "success": true,
-            "response": session_name
+            "response": "successfully deleted session"
         })
         .to_string(),
     ))
 }
 
-// TODO
-async fn get_file_metadata(
+#[derive(Serialize)]
+struct FileMetadataResponse {
+    name: String,
+    size: u64,
+    is_owner: bool,
+}
+
+async fn get_all_file_metadata_in_session(
     rcm: State<ConnectionManager>,
     secure_ip: SecureClientIp,
-    Path(session_name): Path<String>,
+    headers: HeaderMap,
+    Path(session_id): Path<String>,
 ) -> Result<(StatusCode, String), (StatusCode, String)> {
-    utils::handle_call_rate_limit(rcm, &secure_ip).await?;
+    utils::handle_call_rate_limit(rcm.clone(), &secure_ip).await?;
+    utils::check_session_exists(rcm.clone(), &session_id).await?;
+
+    let user_id = utils::check_user_is_in_session(&headers, &session_id)?;
+
+    let mut files: Vec<FileMetadataResponse> = Vec::new();
+
+    let key = format!("files:{}", session_id);
+    let file_names = redis_handler::smembers(rcm.clone(), &key).await?;
+    for file_name in file_names {
+        let file = redis_handler::hgetall(rcm.clone(), &format!("file:{}", file_name)).await?;
+        let file = FileMetadataResponse {
+            name: file[1].clone(),
+            size: file[3].parse().unwrap_or(0),
+            is_owner: file[5] == user_id,
+        };
+        files.push(file);
+    }
 
     Ok((
         StatusCode::OK,
         json!({
             "success": true,
-            "response": session_name
+            "response": files
         })
         .to_string(),
     ))
 }
 
-// TODO
+struct FileMetadata {
+    name: String,
+    size: u64,
+    owner_id: String,
+}
+
+#[derive(Deserialize)]
+struct FileMetadataBody {
+    name: String,
+    size: u64,
+}
+
 async fn add_file(
     rcm: State<ConnectionManager>,
     secure_ip: SecureClientIp,
-    Path(session_name): Path<String>,
+    headers: HeaderMap,
+    Path(session_id): Path<String>,
+    Json(files): Json<Vec<FileMetadataBody>>,
 ) -> Result<(StatusCode, String), (StatusCode, String)> {
-    utils::handle_call_rate_limit(rcm, &secure_ip).await?;
+    utils::handle_call_rate_limit(rcm.clone(), &secure_ip).await?;
+    utils::check_session_exists(rcm.clone(), &session_id).await?;
+
+    let user_id = utils::check_user_is_in_session(&headers, &session_id)?;
+
+    let mut new_files: Vec<FileMetadata> = Vec::new();
+
+    let key = format!("files:{}", session_id);
+
+    for file in files {
+        if redis_handler::sismember(rcm.clone(), &key, &file.name).await? {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                json!({
+                    "success": false,
+                    "response": {
+                        "message": format!("file \"{}\" already exists", &file.name),
+                        "file": &file.name
+                    }
+                })
+                .to_string(),
+            ));
+        }
+
+        new_files.push(FileMetadata {
+            name: file.name,
+            size: file.size,
+            owner_id: user_id.clone(),
+        });
+    }
+
+    if new_files.len() == 0 {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            json!({
+                "success": false,
+                "response": {
+                    "message": "no files provided"
+                }
+            })
+            .to_string(),
+        ));
+    }
+
+    for file in new_files {
+        let key = format!("files:{}:{}", &session_id, &file.name);
+        let file_size = file.size.to_string();
+        let items = [
+            ("name", file.name.as_str()),
+            ("size", file_size.as_str()),
+            ("owner.id", file.owner_id.as_str()),
+        ];
+        redis_handler::hset_multiple(rcm.clone(), &key, &items, None).await?;
+
+        let key = format!("files:{}", &session_id);
+        redis_handler::sadd(rcm.clone(), &key, &file.name, None).await?;
+    }
 
     Ok((
         StatusCode::OK,
         json!({
             "success": true,
-            "response": session_name
+            "response": "successfully added files"
         })
         .to_string(),
     ))
 }
 
-// TODO
-async fn remove_file(
+async fn get_file_metadata(
     rcm: State<ConnectionManager>,
     secure_ip: SecureClientIp,
-    Path(session_name): Path<String>,
+    headers: HeaderMap,
+    Path(session_id): Path<String>,
+    Path(file_name): Path<String>,
 ) -> Result<(StatusCode, String), (StatusCode, String)> {
-    utils::handle_call_rate_limit(rcm, &secure_ip).await?;
+    utils::handle_call_rate_limit(rcm.clone(), &secure_ip).await?;
+    utils::check_session_exists(rcm.clone(), &session_id).await?;
+
+    let user_id = utils::check_user_is_in_session(&headers, &session_id)?;
+
+    let key = format!("files:{}:{}", &session_id, &file_name);
+    if !redis_handler::exists(rcm.clone(), &key).await? {
+        return Err((
+            StatusCode::NOT_FOUND,
+            json!({
+                "success": false,
+                "message": "file not found"
+            })
+            .to_string(),
+        ));
+    }
+
+    let file_data = redis_handler::hgetall(rcm, &key).await?;
+
+    let file = FileMetadataResponse {
+        name: file_data[1].clone(),
+        size: file_data[3].parse().unwrap_or(0),
+        is_owner: file_data[5] == user_id,
+    };
 
     Ok((
         StatusCode::OK,
         json!({
             "success": true,
-            "response": session_name
+            "response": file
+        })
+        .to_string(),
+    ))
+}
+
+async fn delete_file(
+    rcm: State<ConnectionManager>,
+    secure_ip: SecureClientIp,
+    headers: HeaderMap,
+    Path(session_id): Path<String>,
+    Path(file_name): Path<String>,
+) -> Result<(StatusCode, String), (StatusCode, String)> {
+    utils::handle_call_rate_limit(rcm.clone(), &secure_ip).await?;
+    utils::check_session_exists(rcm.clone(), &session_id).await?;
+
+    let user_id = utils::check_user_is_in_session(&headers, &session_id)?;
+
+    let key = format!("files:{}:{}", &session_id, &file_name);
+    if !redis_handler::exists(rcm.clone(), &key).await? {
+        return Err((
+            StatusCode::NOT_FOUND,
+            json!({
+                "success": false,
+                "message": "file not found"
+            })
+            .to_string(),
+        ));
+    }
+
+    let file_data = redis_handler::hgetall(rcm.clone(), &key).await?;
+
+    if file_data[5] != user_id {
+        return Err((
+            StatusCode::FORBIDDEN,
+            json!({
+                "success": false,
+                "message": "you are not allowed to delete this file"
+            })
+            .to_string(),
+        ));
+    }
+    
+    redis_handler::del(rcm, &key).await?;
+
+    Ok((
+        StatusCode::OK,
+        json!({
+            "success": true,
+            "response": "successfully deleted file"
         })
         .to_string(),
     ))

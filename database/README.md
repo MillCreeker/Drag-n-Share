@@ -1,30 +1,62 @@
 # Data Model
 
-## SET calls
-`<IP>`
+## HASH session:\<session.id\>
 
-## HASH session:\<sessionName\>
+Session data.
+
+### Data Structure
+
 ```JSON
 {
-    code: String (SHA256),
-    owner.id: String
+    "name": String,
+    "code": String (SHA256)
 }
 ```
 
-## session:\<sessionName\>:\<ID\>
-`access token (SHA256)`
+## session:\<session.name\>
 
-## SET files:\<sessionName\>
+Link of session name to session id.
+
+### Data Structure
+
+`<session.id>`
+
+## SET files:\<session.id\>
+
+List of files in a session.
+
+### Data Structure
+
 `<filename>`
 
-## HASH file:\<sessionName\>:\<filename\>
+## HASH files:\<session.id\>:\<filename\>
+
+File metadata.
+
+### Data Structure
+
 ```JSON
 {
-    name: String,
-    size: Number,
-    owner.id: String (UID)
+    "name": String,
+    "size": Number,
+    "owner.id": String (from JWT)
 }
 ```
 
-## accessAttempt:\<sessionName\>:\<IP\>
+## access.attempts:\<session.id\>:\<ip\>
+
+Count calls of an IP to join a session.
+Too many calls will result in a rate limit.
+
+### Data Structure
+
 `<Nr of attempts>`
+
+## SET calls
+
+Will expire after 1 second.
+To limit the call rate.
+
+### Data Structure
+
+`<Iip`
