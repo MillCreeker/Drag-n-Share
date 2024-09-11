@@ -43,6 +43,13 @@ File metadata.
 }
 ```
 
+## created.sessions:\<ip\>
+Keeps track of created sessions.
+Users should only be able to create one session per IP.
+
+### Data Structure
+`<session.id>`
+
 ## access.attempts:\<session.id\>:\<ip\>
 
 Count calls of an IP to join a session.
@@ -59,4 +66,4 @@ To limit the call rate.
 
 ### Data Structure
 
-`<Iip`
+`<ip>`

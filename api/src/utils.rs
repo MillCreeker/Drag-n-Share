@@ -145,6 +145,7 @@ pub struct Claims {
     aud: String,
     sub: String,
     iat: u128,
+    exp: u128,
     is_host: bool,
 }
 
@@ -160,6 +161,7 @@ pub fn create_jwt(
         aud: session_id.to_string(),
         sub: user_id.unwrap_or(&get_uuid()).to_string(),
         iat: get_current_timestamp(),
+        exp: get_current_timestamp() + JWT_EXPIRATION_TIME,
         is_host: !user_id.is_none(),
     };
 
@@ -178,7 +180,7 @@ pub fn create_jwt(
     }
 }
 
-const JWT_EXPIRATION_TIME: u128 = 5 * 60 * 1000; // 5 minutes
+const JWT_EXPIRATION_TIME: u128 = 50 * 60 * 1000; //  TODO 5 minutes
 
 pub fn decode_jwt(ref jwt: &str) -> Result<Claims, (StatusCode, String)> {
     let jwt_key = std::env::var("JWT_KEY").map_err(|_| {
@@ -192,19 +194,18 @@ pub fn decode_jwt(ref jwt: &str) -> Result<Claims, (StatusCode, String)> {
         )
     })?;
 
+    let mut validation = jsonwebtoken::Validation::new(jsonwebtoken::Algorithm::HS256);
+    validation.validate_aud = false;
+
     let key = jsonwebtoken::DecodingKey::from_secret(jwt_key.as_ref());
 
-    let decoded_jwt = jsonwebtoken::decode::<Claims>(
-        &jwt,
-        &key,
-        &jsonwebtoken::Validation::new(jsonwebtoken::Algorithm::HS256),
-    )
-    .map_err(|_| {
+    let decoded_jwt = jsonwebtoken::decode::<Claims>(&jwt, &key, &validation).map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             json!({
                 "success": false,
-                "response": "failed to decode jwt"
+                // "response": "failed to decode jwt"
+                "response": e.to_string()
             })
             .to_string(),
         )
@@ -231,7 +232,10 @@ pub fn check_user_is_host(
     ref headers: &HeaderMap,
     session_id: &str,
 ) -> Result<(), (StatusCode, String)> {
-    let jwt = get_header(&headers, "authorization")?;
+    let auth = get_header(&headers, "authorization")?;
+    let parts = auth.split(" ");
+    let jwt = parts.last().unwrap_or("");
+
     let claims = decode_jwt(&jwt)?;
 
     if claims.aud != session_id {
@@ -266,11 +270,18 @@ pub fn get_current_timestamp() -> u128 {
         .as_millis()
 }
 
+pub struct User {
+    pub id: String,
+    pub is_host: bool,
+}
+
 pub fn check_user_is_in_session(
     ref headers: &HeaderMap,
     session_id: &str,
-) -> Result<String, (StatusCode, String)> {
-    let jwt = get_header(&headers, "authorization")?;
+) -> Result<User, (StatusCode, String)> {
+    let auth = get_header(&headers, "authorization")?;
+    let parts = auth.split(" ");
+    let jwt = parts.last().unwrap_or("");
     let claims = decode_jwt(&jwt)?;
 
     if claims.aud != session_id {
@@ -284,7 +295,10 @@ pub fn check_user_is_in_session(
         ));
     }
 
-    Ok(claims.sub)
+    Ok(User {
+        id: claims.sub,
+        is_host: claims.is_host,
+    })
 }
 
 pub fn get_header(ref headers: &HeaderMap, key: &str) -> Result<String, (StatusCode, String)> {

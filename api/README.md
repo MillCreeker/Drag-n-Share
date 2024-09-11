@@ -80,7 +80,7 @@ Optionally update session name.
 
 `Authorization: Bearer <JWT>`
 
-### Body (optional)
+### Body
 
 ```JSON
 {
