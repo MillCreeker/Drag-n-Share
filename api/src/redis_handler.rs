@@ -2,28 +2,32 @@ use axum::{extract::State, http::StatusCode};
 
 use redis::{aio::ConnectionManager, AsyncCommands};
 
+use log::error;
 use serde_json::json;
 
-const EXPIRATION_TIME: i64 = 3000; // TODO 5min
+const EXPIRATION_TIME: i64 = 300; // 5min
+const DB_ERROR_MSG: &str = "error connection to database";
 
 pub async fn expire(
     mut rcm: State<ConnectionManager>,
     ref key: &str,
     seconds: i64,
 ) -> Result<(), (StatusCode, String)> {
-    rcm.expire(&key, seconds).await.map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            json!({
-                "success": false,
-                // "message": "error connection to database
-                "message": format!("expire: {:?}", e)
-            })
-            .to_string(),
-        )
-    })?;
+    match rcm.expire::<&str, i64>(&key, seconds).await {
+        Ok(_) => Ok(()),
+        Err(e) => {
+            error!("expire: {:?}", e);
 
-    Ok(())
+            return Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                json!({
+                    "success": false,
+                    "message": DB_ERROR_MSG
+                })
+                .to_string(),
+            ));
+        }
+    }
 }
 
 pub async fn exists(
@@ -32,15 +36,18 @@ pub async fn exists(
 ) -> Result<bool, (StatusCode, String)> {
     match rcm.exists(&key).await {
         Ok(v) => Ok(v),
-        Err(e) => Err((
-            StatusCode::INTERNAL_SERVER_ERROR,
-            json!({
-                "success": false,
-                // "message": "error connection to database
-                "message": format!("exists: {:?}", e)
-            })
-            .to_string(),
-        )),
+        Err(e) => {
+            error!("exists: {:?}", e);
+
+            return Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                json!({
+                    "success": false,
+                    "message": DB_ERROR_MSG
+                })
+                .to_string(),
+            ));
+        }
     }
 }
 
@@ -52,21 +59,24 @@ pub async fn set(
 ) -> Result<(), (StatusCode, String)> {
     let expiration_time = expiration_time.unwrap_or(EXPIRATION_TIME) as u64;
 
-    rcm.set_ex::<&str, &str, bool>(&key, &val, expiration_time)
+    match rcm
+        .set_ex::<&str, &str, bool>(&key, &val, expiration_time)
         .await
-        .map_err(|e| {
-            (
+    {
+        Ok(_) => Ok(()),
+        Err(e) => {
+            error!("set: {:?}", e);
+
+            return Err((
                 StatusCode::INTERNAL_SERVER_ERROR,
                 json!({
                     "success": false,
-                    // "message": "error connection to database
-                "message": format!("set: {:?}", e)
+                    "message": DB_ERROR_MSG
                 })
                 .to_string(),
-            )
-        })?;
-
-    Ok(())
+            ));
+        }
+    }
 }
 
 pub async fn incr(
@@ -74,41 +84,47 @@ pub async fn incr(
     ref key: &str,
     expiration_time: Option<i64>,
 ) -> Result<i64, (StatusCode, String)> {
-    let amount = rcm.incr(&key, 1).await.map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            json!({
-                "success": false,
-                // "message": "error connection to database
-                "message": format!("incr: {:?}", e)
-            })
-            .to_string(),
-        )
-    })?;
+    match rcm.incr(&key, 1).await {
+        Ok(amount) => {
+            let expiration_time = expiration_time.unwrap_or(EXPIRATION_TIME);
+            expire(rcm, &key, expiration_time).await?;
 
-    let expiration_time = expiration_time.unwrap_or(EXPIRATION_TIME);
-    expire(rcm, &key, expiration_time).await?;
+            return Ok(amount);
+        }
+        Err(e) => {
+            error!("incr: {:?}", e);
 
-    Ok(amount)
+            return Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                json!({
+                    "success": false,
+                    "message": DB_ERROR_MSG
+                })
+                .to_string(),
+            ));
+        }
+    }
 }
 
 pub async fn del(
     mut rcm: State<ConnectionManager>,
     ref key: &str,
 ) -> Result<(), (StatusCode, String)> {
-    rcm.del(&key).await.map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            json!({
-                "success": false,
-                // "message": "error connection to database
-                "message": format!("del: {:?}", e)
-            })
-            .to_string(),
-        )
-    })?;
+    match rcm.del::<&str, String>(&key).await {
+        Ok(_) => Ok(()),
+        Err(e) => {
+            error!("del: {:?}", e);
 
-    Ok(())
+            return Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                json!({
+                    "success": false,
+                    "message": DB_ERROR_MSG
+                })
+                .to_string(),
+            ));
+        }
+    }
 }
 
 pub async fn get(
@@ -121,15 +137,18 @@ pub async fn get(
 
     match rcm.get(&key).await {
         Ok(v) => Ok(v),
-        Err(e) => Err((
-            StatusCode::INTERNAL_SERVER_ERROR,
-            json!({
-                "success": false,
-                // "message": "error connection to database
-                "message": format!("get: {:?}", e)
-            })
-            .to_string(),
-        )),
+        Err(e) => {
+            error!("get: {:?}", e);
+
+            return Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                json!({
+                    "success": false,
+                    "message": DB_ERROR_MSG
+                })
+                .to_string(),
+            ));
+        }
     }
 }
 
@@ -139,21 +158,24 @@ pub async fn sadd(
     ref val: &str,
     expiration_time: Option<i64>,
 ) -> Result<(), (StatusCode, String)> {
-    rcm.sadd(&key, &val).await.map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            json!({
-                "success": false,
-                // "message": "error connection to database
-                "message": format!("sadd: {:?}", e)
-            })
-            .to_string(),
-        )
-    })?;
+    match rcm.sadd::<&str, &str, String>(&key, &val).await {
+        Ok(_) => {
+            expire(rcm, &key, expiration_time.unwrap_or(EXPIRATION_TIME)).await?;
+            return Ok(());
+        }
+        Err(e) => {
+            error!("sadd: {:?}", e);
 
-    expire(rcm, &key, expiration_time.unwrap_or(EXPIRATION_TIME)).await?;
-
-    Ok(())
+            return Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                json!({
+                    "success": false,
+                    "message": DB_ERROR_MSG
+                })
+                .to_string(),
+            ));
+        }
+    }
 }
 
 pub async fn sismember(
@@ -163,15 +185,18 @@ pub async fn sismember(
 ) -> Result<bool, (StatusCode, String)> {
     match rcm.sismember(&key, &val).await {
         Ok(v) => Ok(v),
-        Err(e) => Err((
-            StatusCode::INTERNAL_SERVER_ERROR,
-            json!({
-                "success": false,
-                // "message": "error connection to database
-                "message": format!("sismember: {:?}", e)
-            })
-            .to_string(),
-        )),
+        Err(e) => {
+            error!("sismember: {:?}", e);
+
+            return Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                json!({
+                    "success": false,
+                    "message": DB_ERROR_MSG
+                })
+                .to_string(),
+            ));
+        }
     }
 }
 
@@ -181,15 +206,18 @@ pub async fn smembers(
 ) -> Result<Vec<String>, (StatusCode, String)> {
     match rcm.smembers(&key).await {
         Ok(v) => Ok(v),
-        Err(e) => Err((
-            StatusCode::INTERNAL_SERVER_ERROR,
-            json!({
-                "success": false,
-                // "message": "error connection to database
-                "message": format!("smembers: {:?}", e)
-            })
-            .to_string(),
-        )),
+        Err(e) => {
+            error!("smembers: {:?}", e);
+
+            return Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                json!({
+                    "success": false,
+                    "message": DB_ERROR_MSG
+                })
+                .to_string(),
+            ));
+        }
     }
 }
 
@@ -200,15 +228,18 @@ pub async fn srem(
 ) -> Result<String, (StatusCode, String)> {
     match rcm.srem(&key, &val).await {
         Ok(v) => Ok(v),
-        Err(e) => Err((
-            StatusCode::INTERNAL_SERVER_ERROR,
-            json!({
-                "success": false,
-                // "message": "error connection to database
-                "message": format!("srem: {:?}", e)
-            })
-            .to_string(),
-        )),
+        Err(e) => {
+            error!("srem: {:?}", e);
+
+            return Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                json!({
+                    "success": false,
+                    "message": DB_ERROR_MSG
+                })
+                .to_string(),
+            ));
+        }
     }
 }
 
@@ -218,21 +249,28 @@ pub async fn hset_multiple(
     ref items: &[(&str, &str)],
     expiration_time: Option<i64>,
 ) -> Result<(), (StatusCode, String)> {
-    rcm.hset_multiple(&key, &items).await.map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            json!({
-                "success": false,
-                // "message": "error connection to database
-                "message": format!("hset_multiple: {:?}", e)
-            })
-            .to_string(),
-        )
-    })?;
+    match rcm
+        .hset_multiple::<&str, &str, &str, String>(&key, &items)
+        .await
+    {
+        Ok(_) => {
+            expire(rcm, &key, expiration_time.unwrap_or(EXPIRATION_TIME)).await?;
 
-    expire(rcm, &key, expiration_time.unwrap_or(EXPIRATION_TIME)).await?;
+            return Ok(());
+        }
+        Err(e) => {
+            error!("hset_multiple: {:?}", e);
 
-    Ok(())
+            return Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                json!({
+                    "success": false,
+                    "message": DB_ERROR_MSG
+                })
+                .to_string(),
+            ));
+        }
+    }
 }
 
 pub async fn hget(
@@ -242,15 +280,18 @@ pub async fn hget(
 ) -> Result<String, (StatusCode, String)> {
     match rcm.hget(&key, &field).await {
         Ok(v) => Ok(v),
-        Err(e) => Err((
-            StatusCode::INTERNAL_SERVER_ERROR,
-            json!({
-                "success": false,
-                // "message": "error connection to database
-                "message": format!("hget: {:?}", e)
-            })
-            .to_string(),
-        )),
+        Err(e) => {
+            error!("hget: {:?}", e);
+
+            return Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                json!({
+                    "success": false,
+                    "message": DB_ERROR_MSG
+                })
+                .to_string(),
+            ));
+        }
     }
 }
 
@@ -260,14 +301,17 @@ pub async fn hgetall(
 ) -> Result<Vec<String>, (StatusCode, String)> {
     match rcm.hgetall(&key).await {
         Ok(v) => Ok(v),
-        Err(e) => Err((
-            StatusCode::INTERNAL_SERVER_ERROR,
-            json!({
-                "success": false,
-                // "message": "error connection to database
-                "message": format!("hgetall: {:?}", e)
-            })
-            .to_string(),
-        )),
+        Err(e) => {
+            error!("hgetall: {:?}", e);
+
+            return Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                json!({
+                    "success": false,
+                    "message": DB_ERROR_MSG
+                })
+                .to_string(),
+            ));
+        }
     }
 }

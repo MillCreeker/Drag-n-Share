@@ -16,11 +16,15 @@ use redis::aio::ConnectionManager;
 
 use std::net::SocketAddr;
 
+use env_logger::Env;
+
 mod redis_handler;
 mod utils;
 
 #[tokio::main]
 async fn main() {
+    env_logger::Builder::from_env(Env::default().default_filter_or("info")).init();
+
     dotenvy::dotenv().expect("Unable to load .env file");
 
     let redis_connection_manager: ConnectionManager = utils::get_redis_connection_manager()

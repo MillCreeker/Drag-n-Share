@@ -16,6 +16,9 @@ redis = { version = "0.26.1", features = ["tokio-comp", "connection-manager"] }
 
 dotenvy = "0.15.7"
 
+log = "0.4.22"
+env_logger = "0.11.5"
+
 rand = "0.8.5"
 
 sha256 = "1.5.0"

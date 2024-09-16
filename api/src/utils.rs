@@ -6,6 +6,8 @@ use axum_client_ip::SecureClientIp;
 use rand::seq::SliceRandom;
 use redis::aio::ConnectionManager;
 
+use log::error;
+
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
@@ -180,7 +182,7 @@ pub fn create_jwt(
     }
 }
 
-const JWT_EXPIRATION_TIME: u128 = 50 * 60 * 1000; //  TODO 5 minutes
+const JWT_EXPIRATION_TIME: u128 = 5 * 60 * 1000; // 5 minutes
 
 pub fn decode_jwt(ref jwt: &str) -> Result<Claims, (StatusCode, String)> {
     let jwt_key = std::env::var("JWT_KEY").map_err(|_| {
@@ -199,17 +201,21 @@ pub fn decode_jwt(ref jwt: &str) -> Result<Claims, (StatusCode, String)> {
 
     let key = jsonwebtoken::DecodingKey::from_secret(jwt_key.as_ref());
 
-    let decoded_jwt = jsonwebtoken::decode::<Claims>(&jwt, &key, &validation).map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            json!({
-                "success": false,
-                // "response": "failed to decode jwt"
-                "response": e.to_string()
-            })
-            .to_string(),
-        )
-    })?;
+    let decoded_jwt = match jsonwebtoken::decode::<Claims>(&jwt, &key, &validation) {
+        Ok(v) => v,
+        Err(e) => {
+            error!("decode_jwt: {:?}", e);
+
+            return Err((
+                StatusCode::UNAUTHORIZED,
+                json!({
+                    "success": false,
+                    "response": "failed to decode jwt"
+                })
+                .to_string(),
+            ))
+        }
+    };
 
     let claims = decoded_jwt.claims;
     let now = get_current_timestamp();
