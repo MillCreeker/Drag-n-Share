@@ -5,12 +5,13 @@
 ### Setup
 `redis.conf` file in [database](./database/) folder:
 ```
-requirepass 123456
+requirepass "123456"
 ```
 
 `.env` file in [api](./api/) folder:
 ```
 DATABASE_PASSWORD=123456
+JWT_KEY=abc123
 ```
 
 `.env` file in [web_app](./web_app/) folder:

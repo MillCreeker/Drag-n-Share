@@ -17,9 +17,7 @@ use redis::aio::ConnectionManager;
 use std::net::SocketAddr;
 
 use env_logger::Env;
-
-mod redis_handler;
-mod utils;
+use log::info;
 
 #[tokio::main]
 async fn main() {
@@ -30,10 +28,10 @@ async fn main() {
     let redis_connection_manager: ConnectionManager = utils::get_redis_connection_manager()
         .await
         .expect("Error connecting to Redis");
-    println!("Connected to Redis");
+    info!("Connected to Redis");
 
     let listener = TcpListener::bind("0.0.0.0:7878").await.unwrap();
-    println!("Listening on: {}", listener.local_addr().unwrap());
+    info!("Listening on: {}", listener.local_addr().unwrap());
 
     let app = Router::new()
         .route("/", get(ping))
@@ -89,7 +87,7 @@ async fn create_session(
     utils::handle_call_rate_limit(rcm.clone(), &secure_ip).await?;
 
     let key = format!("created.sessions:{}", &secure_ip.0);
-    if redis_handler::exists(rcm.clone(), &key).await? {
+    if utils::redis_handler::exists(rcm.clone(), &key).await? {
         return Err((
             StatusCode::CONFLICT,
             json!({
@@ -109,14 +107,14 @@ async fn create_session(
     let encrypted_code = utils::sha256(&code);
 
     let key = format!("session:{}", session_name);
-    redis_handler::set(rcm.clone(), &key, &session_id, None).await?;
+    utils::redis_handler::set(rcm.clone(), &key, &session_id, None).await?;
 
     let key = format!("session:{}", session_id);
     let items = [("name", session_name.as_str()), ("code", &encrypted_code)];
-    redis_handler::hset_multiple(rcm.clone(), &key, &items, None).await?;
+    utils::redis_handler::hset_multiple(rcm.clone(), &key, &items, None).await?;
 
     let key = format!("created.sessions:{}", &secure_ip.0);
-    redis_handler::set(rcm, &key, &session_id, None).await?;
+    utils::redis_handler::set(rcm, &key, &session_id, None).await?;
 
     Ok((
         StatusCode::CREATED,
@@ -142,7 +140,7 @@ async fn get_id_for_session_name(
 
     let key = format!("session:{}", session_id);
 
-    if !redis_handler::exists(rcm.clone(), &key).await? {
+    if !utils::redis_handler::exists(rcm.clone(), &key).await? {
         return Err((
             StatusCode::NOT_FOUND,
             json!({
@@ -153,7 +151,7 @@ async fn get_id_for_session_name(
         ));
     }
 
-    let session_id = redis_handler::get(rcm, &key).await?;
+    let session_id = utils::redis_handler::get(rcm, &key).await?;
 
     Ok((
         StatusCode::OK,
@@ -176,7 +174,7 @@ async fn join_session(
     utils::handle_call_rate_limit(rcm.clone(), &secure_ip).await?;
     utils::check_session_exists(rcm.clone(), &session_id).await?;
     let key = format!("access.attempts:{}:{}", session_id, secure_ip.0);
-    if redis_handler::get(rcm.clone(), &key).await? == "5" {
+    if utils::redis_handler::get(rcm.clone(), &key).await? == "5" {
         return Err((
             StatusCode::TOO_MANY_REQUESTS,
             json!({
@@ -190,11 +188,11 @@ async fn join_session(
     let encrypted_code = utils::get_header(&headers, "authorization")?;
 
     let key = format!("session:{}", session_id);
-    let code = redis_handler::hget(rcm.clone(), &key, "code").await?;
+    let code = utils::redis_handler::hget(rcm.clone(), &key, "code").await?;
 
     if encrypted_code != code {
         let key = format!("access.attempts:{}:{}", session_id, secure_ip.0);
-        redis_handler::incr(rcm, &key, Some(10)).await?;
+        utils::redis_handler::incr(rcm, &key, Some(10)).await?;
 
         return Err((
             StatusCode::UNAUTHORIZED,
@@ -238,7 +236,7 @@ async fn update_session(
     utils::check_user_is_host(&headers, &session_id)?;
 
     let key = format!("session:{}", session_id);
-    let old_session_name = redis_handler::hget(rcm.clone(), &key, "name").await?;
+    let old_session_name = utils::redis_handler::hget(rcm.clone(), &key, "name").await?;
 
     let code = utils::get_random_six_digit_code();
     let encrypted_code = utils::sha256(&code);
@@ -248,13 +246,13 @@ async fn update_session(
         ("name", new_name.as_str()),
         ("code", encrypted_code.as_str()),
     ];
-    redis_handler::hset_multiple(rcm.clone(), &key, &items, None).await?;
+    utils::redis_handler::hset_multiple(rcm.clone(), &key, &items, None).await?;
 
     let key = format!("session:{}", old_session_name);
-    redis_handler::del(rcm.clone(), &key).await?;
+    utils::redis_handler::del(rcm.clone(), &key).await?;
 
     let key = format!("session:{}", &new_name);
-    redis_handler::set(rcm, &key, &session_id, None).await?;
+    utils::redis_handler::set(rcm, &key, &session_id, None).await?;
 
     Ok((
         StatusCode::OK,
@@ -280,24 +278,24 @@ async fn delete_session(
     utils::check_user_is_host(&headers, &session_id)?;
 
     let key = format!("created.sessions:{}", secure_ip.0);
-    redis_handler::del(rcm.clone(), &key).await?;
+    utils::redis_handler::del(rcm.clone(), &key).await?;
 
     let key = format!("session:{}", session_id);
-    let session_name = redis_handler::hget(rcm.clone(), &key, "name").await?;
-    redis_handler::del(rcm.clone(), &key).await?;
+    let session_name = utils::redis_handler::hget(rcm.clone(), &key, "name").await?;
+    utils::redis_handler::del(rcm.clone(), &key).await?;
 
     let key = format!("session:{}", session_name);
-    redis_handler::del(rcm.clone(), &key).await?;
+    utils::redis_handler::del(rcm.clone(), &key).await?;
 
     let key = format!("files:{}", session_id);
-    let files = redis_handler::smembers(rcm.clone(), &key).await?;
+    let files = utils::redis_handler::smembers(rcm.clone(), &key).await?;
     for file in files {
         let key = format!("files:{}:{}", session_id, file);
-        redis_handler::del(rcm.clone(), &key).await?;
+        utils::redis_handler::del(rcm.clone(), &key).await?;
     }
 
     let key = format!("files:{}", session_id);
-    redis_handler::del(rcm, &key).await?;
+    utils::redis_handler::del(rcm, &key).await?;
 
     Ok((
         StatusCode::OK,
@@ -330,10 +328,10 @@ async fn get_all_file_metadata_in_session(
     let mut files: Vec<FileMetadataResponse> = Vec::new();
 
     let key = format!("files:{}", session_id);
-    let file_names = redis_handler::smembers(rcm.clone(), &key).await?;
+    let file_names = utils::redis_handler::smembers(rcm.clone(), &key).await?;
 
     for file_name in file_names {
-        let file = redis_handler::hgetall(
+        let file = utils::redis_handler::hgetall(
             rcm.clone(),
             &format!("files:{}:{}", &session_id, &file_name),
         )
@@ -389,7 +387,7 @@ async fn add_files(
     let key = format!("files:{}", session_id);
 
     for file in files {
-        if redis_handler::sismember(rcm.clone(), &key, &file.name).await? {
+        if utils::redis_handler::sismember(rcm.clone(), &key, &file.name).await? {
             return Err((
                 StatusCode::BAD_REQUEST,
                 json!({
@@ -431,10 +429,10 @@ async fn add_files(
             ("size", file_size.as_str()),
             ("owner.id", file.owner_id.as_str()),
         ];
-        redis_handler::hset_multiple(rcm.clone(), &key, &items, None).await?;
+        utils::redis_handler::hset_multiple(rcm.clone(), &key, &items, None).await?;
 
         let key = format!("files:{}", &session_id);
-        redis_handler::sadd(rcm.clone(), &key, &file.name, None).await?;
+        utils::redis_handler::sadd(rcm.clone(), &key, &file.name, None).await?;
     }
 
     Ok((
@@ -459,7 +457,7 @@ async fn get_file_metadata(
     let user = utils::check_user_is_in_session(&headers, &session_id)?;
 
     let key = format!("files:{}:{}", &session_id, &file_name);
-    if !redis_handler::exists(rcm.clone(), &key).await? {
+    if !utils::redis_handler::exists(rcm.clone(), &key).await? {
         return Err((
             StatusCode::NOT_FOUND,
             json!({
@@ -470,7 +468,7 @@ async fn get_file_metadata(
         ));
     }
 
-    let file_data = redis_handler::hgetall(rcm, &key).await?;
+    let file_data = utils::redis_handler::hgetall(rcm, &key).await?;
 
     if file_data.len() != 6 {
         return Err((
@@ -511,7 +509,7 @@ async fn delete_file(
     let user = utils::check_user_is_in_session(&headers, &session_id)?;
 
     let key = format!("files:{}:{}", &session_id, &file_name);
-    if !redis_handler::exists(rcm.clone(), &key).await? {
+    if !utils::redis_handler::exists(rcm.clone(), &key).await? {
         return Err((
             StatusCode::NOT_FOUND,
             json!({
@@ -522,13 +520,13 @@ async fn delete_file(
         ));
     }
 
-    let user_id = redis_handler::hget(rcm.clone(), &key, "owner.id").await?;
+    let user_id = utils::redis_handler::hget(rcm.clone(), &key, "owner.id").await?;
 
     if user.id == user_id || user.is_host {
-        redis_handler::del(rcm.clone(), &key).await?;
+        utils::redis_handler::del(rcm.clone(), &key).await?;
 
         let key = format!("files:{}", &session_id);
-        redis_handler::srem(rcm, &key, &file_name).await?;
+        utils::redis_handler::srem(rcm, &key, &file_name).await?;
     } else {
         return Err((
             StatusCode::FORBIDDEN,

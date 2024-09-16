@@ -1,3 +1,5 @@
+pub mod redis_handler;
+
 use axum::{
     extract::State,
     http::{HeaderMap, StatusCode},
@@ -12,8 +14,6 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use std::time::{SystemTime, UNIX_EPOCH};
-
-use crate::redis_handler;
 
 use rand::Rng;
 use sha256::digest;
@@ -34,7 +34,7 @@ pub async fn get_redis_connection_manager(
     let redis_connection_manager = match ConnectionManager::new_with_config(client, config).await {
         Ok(m) => m,
         Err(e) => {
-            println!("Error connecting to Redis: {}", e);
+            error!("Error connecting to Redis: {}", e);
             return Err(e);
         }
     };
