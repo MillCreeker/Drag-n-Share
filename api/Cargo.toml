@@ -19,6 +19,9 @@ path = "src/lib/utils.rs"
 axum = "0.7.5"
 tokio = { version = "1.40.0", features = ["full"] }
 
+futures-util = "0.3.30"
+tokio-stream = "0.1.16"
+
 axum-client-ip = "0.6.0"
 
 serde = { version = "1.0.209", features = ["derive"] }

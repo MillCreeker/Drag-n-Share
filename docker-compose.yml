@@ -68,7 +68,7 @@ services:
         ports:
             - 7879:7879
         volumes:
-            - ./api/src:/api/src
+            - ./api/src:/transmittor/src
             - ./api/.env:/transmittor/.env
             - ./api/Cargo.toml:/transmittor/Cargo.toml
             - ./api/Cargo.lock:/transmittor/Cargo.lock
