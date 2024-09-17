@@ -1,8 +1,14 @@
 #[allow(unused_imports)] // TODO
 use axum::{
-    extract::{Path, State},
+    extract::{
+        ws::{Message, WebSocket, WebSocketUpgrade},
+        Path, State,
+    },
     http::{HeaderMap, StatusCode},
-    response::sse::{Event, KeepAlive, Sse},
+    response::{
+        sse::{Event, KeepAlive, Sse},
+        IntoResponse,
+    },
     routing::get,
     Json, Router,
 };
@@ -12,7 +18,7 @@ use tokio::net::TcpListener;
 use futures_util::stream;
 use std::time::Duration;
 use tokio::time;
-use axum::response::IntoResponse;
+use tokio_stream::StreamExt;
 
 use axum_client_ip::{SecureClientIp, SecureClientIpSource};
 
@@ -24,7 +30,7 @@ use redis::aio::ConnectionManager;
 use std::net::SocketAddr;
 
 use env_logger::Env;
-use log::info;
+use log::{error, info};
 
 #[tokio::main]
 async fn main() {
@@ -42,6 +48,7 @@ async fn main() {
 
     let app = Router::new()
         .route("/", get(ping))
+        .route("/session/:session_id", get(ws_handler))
         .route("/:session_id/:file_name", get(get_file))
         .with_state(redis_connection_manager)
         .layer(SecureClientIpSource::ConnectInfo.into_extension());
@@ -72,6 +79,36 @@ async fn ping(
     ))
 }
 
+async fn ws_handler(
+    rcm: State<ConnectionManager>,
+    secure_ip: SecureClientIp,
+    Path(session_id): Path<String>,
+    ws: WebSocketUpgrade,
+) -> impl IntoResponse {
+    info!("Websocket connection opened");
+    ws.on_upgrade(|ws| ws_handler_inner(rcm, secure_ip, session_id, ws))
+}
+
+#[allow(unused_variables)] // TODO
+async fn ws_handler_inner(
+    rcm: State<ConnectionManager>,
+    secure_ip: SecureClientIp,
+    session_id: String,
+    mut ws: WebSocket,
+) {
+    // Listen for incoming messages and echo them back
+    while let Some(Ok(message)) = ws.next().await {
+        if let Message::Text(text) = message {
+            info!("Received message: {}", text);
+            if let Err(e) = ws.send(Message::Text(text)).await {
+                error!("Failed to send message: {}", e);
+                return;
+            }
+        }
+    }
+}
+
+#[allow(unused_variables)] // TODO
 async fn get_file(
     rcm: State<ConnectionManager>,
     secure_ip: SecureClientIp,
@@ -89,10 +126,11 @@ async fn get_file(
         } else {
             // Simulate an event every second
             time::sleep(Duration::from_secs(1)).await;
-            
+
             // Create an event with data, wrap it in Ok to match the required type
-            let event: Result<Event, String> = Ok(Event::default().data(format!("event number: {}", count)));
-            
+            let event: Result<Event, String> =
+                Ok(Event::default().data(format!("event number: {}", count)));
+
             // Continue the stream
             Some((event, count + 1))
         }

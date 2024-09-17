@@ -16,11 +16,12 @@ name = "utils"
 path = "src/lib/utils.rs"
 
 [dependencies]
-axum = "0.7.5"
+axum = { version = "0.7.5", features = ["ws"]}
 tokio = { version = "1.40.0", features = ["full"] }
 
 futures-util = "0.3.30"
 tokio-stream = "0.1.16"
+tokio-tungstenite = "0.24.0"
 
 axum-client-ip = "0.6.0"
 
