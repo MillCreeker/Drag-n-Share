@@ -8,6 +8,8 @@ use axum::{
 use tokio::net::TcpListener;
 
 use axum_client_ip::{SecureClientIp, SecureClientIpSource};
+use http::header::HeaderValue;
+use tower_http::cors::{AllowOrigin, Any, CorsLayer};
 
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -30,12 +32,20 @@ async fn main() {
         .expect("Error connecting to Redis");
     info!("Connected to Redis");
 
+    let cors = CorsLayer::new()
+        .allow_origin(Any)
+        // .allow_origin(AllowOrigin::exact(
+        //     HeaderValue::from_str("https://drag-n-share.com").unwrap(),
+        // )) // TODO
+        .allow_methods(Any)
+        .allow_headers(Any);
+
     let listener = TcpListener::bind("0.0.0.0:7878").await.unwrap();
     info!("Listening on: {}", listener.local_addr().unwrap());
 
     let app = Router::new()
         .route("/", get(ping))
-        .route("/session", get(ping).post(create_session))
+        .route("/session", get(get_session).post(create_session))
         .route(
             "/session/:session_id",
             get(get_id_for_session_name)
@@ -52,6 +62,7 @@ async fn main() {
             get(get_file_metadata).delete(delete_file),
         )
         .with_state(redis_connection_manager)
+        .layer(cors)
         .layer(SecureClientIpSource::ConnectInfo.into_extension());
 
     axum::serve(
@@ -75,6 +86,48 @@ async fn ping(
         json!({
             "success": true,
             "response": timestamp
+        })
+        .to_string(),
+    ))
+}
+
+async fn get_session(
+    rcm: State<ConnectionManager>,
+    secure_ip: SecureClientIp,
+    headers: HeaderMap,
+) -> Result<(StatusCode, String), (StatusCode, String)> {
+    utils::handle_call_rate_limit(rcm.clone(), &secure_ip).await?;
+
+    let claims = utils::decode_jwt_from_header(&headers)?;
+    let session_id = claims.aud;
+
+    utils::check_session_exists(rcm.clone(), &session_id).await?;
+    utils::check_user_is_host(&headers, &session_id)?;
+
+    let key = format!("session:{}", session_id);
+    let session_name = utils::redis_handler::hget(rcm.clone(), &key, "name").await?;
+
+    let code = utils::get_random_six_digit_code();
+    let encrypted_code = utils::sha256(&code);
+
+    let items = [
+        ("name", session_name.as_str()),
+        ("code", encrypted_code.as_str()),
+    ];
+    utils::redis_handler::hset_multiple(rcm.clone(), &key, &items, None).await?;
+
+    let key = format!("session:{}", &session_name);
+    utils::redis_handler::set(rcm, &key, &session_id, None).await?;
+
+    Ok((
+        StatusCode::ACCEPTED,
+        json!({
+            "success": true,
+            "response": {
+                "sessionName": session_name,
+                "sessionId": session_id,
+                "accessCode": code
+            }
         })
         .to_string(),
     ))

@@ -144,7 +144,7 @@ services:
             dockerfile: ./Dockerfile.dev
         container_name: nginx-dev
         ports:
-            - 8080:80
+            - 80:80
         volumes:
             - ./nginx/nginx.dev.conf:/etc/nginx/nginx.conf
         depends_on:

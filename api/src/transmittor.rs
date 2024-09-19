@@ -22,6 +22,9 @@ use tokio_stream::StreamExt;
 
 use axum_client_ip::{SecureClientIp, SecureClientIpSource};
 
+use http::header::HeaderValue;
+use tower_http::cors::{AllowOrigin, Any, CorsLayer};
+
 // use serde::{Deserialize, Serialize};
 use serde_json::json;
 
@@ -43,6 +46,14 @@ async fn main() {
         .expect("Error connecting to Redis");
     info!("Connected to Redis");
 
+    let cors = CorsLayer::new()
+        .allow_origin(Any)
+        // .allow_origin(AllowOrigin::exact(
+        //     HeaderValue::from_str("https://drag-n-share.com").unwrap(),
+        // )) // TODO
+        .allow_methods(Any)
+        .allow_headers(Any);
+
     let listener = TcpListener::bind("0.0.0.0:7879").await.unwrap();
     info!("Listening on: {}", listener.local_addr().unwrap());
 
@@ -51,6 +62,7 @@ async fn main() {
         .route("/session/:session_id", get(ws_handler))
         .route("/:session_id/:file_name", get(get_file))
         .with_state(redis_connection_manager)
+        .layer(cors)
         .layer(SecureClientIpSource::ConnectInfo.into_extension());
 
     axum::serve(

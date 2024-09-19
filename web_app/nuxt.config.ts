@@ -19,16 +19,16 @@ export default defineNuxtConfig({
             link: [
                 {
                     rel: "icon",
-                    href: "favicon.ico"
+                    href: "favicon.ico",
                 },
                 {
                     rel: "stylesheet",
-                    href: "https://fonts.googleapis.com/icon?family=Material+Icons",
+                    href: "../assets/css/materialIcons.css",
                 },
             ],
         },
     },
-    runtimeConfig: {
-        apiKey: process.env.API_KEY,
-    }
+    // runtimeConfig: {
+    //     apiKey: process.env.API_KEY,
+    // },
 });

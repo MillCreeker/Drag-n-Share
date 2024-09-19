@@ -144,11 +144,11 @@ pub async fn get_random_dragon_name(
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Claims {
-    aud: String,
-    sub: String,
-    iat: u128,
-    exp: u128,
-    is_host: bool,
+    pub aud: String,
+    pub sub: String,
+    pub iat: u128,
+    pub exp: u128,
+    pub is_host: bool,
 }
 
 pub fn create_jwt(
@@ -213,7 +213,7 @@ pub fn decode_jwt(ref jwt: &str) -> Result<Claims, (StatusCode, String)> {
                     "response": "failed to decode jwt"
                 })
                 .to_string(),
-            ))
+            ));
         }
     };
 
@@ -230,6 +230,15 @@ pub fn decode_jwt(ref jwt: &str) -> Result<Claims, (StatusCode, String)> {
             .to_string(),
         ));
     }
+
+    Ok(claims)
+}
+
+pub fn decode_jwt_from_header(ref headers: &HeaderMap) -> Result<Claims, (StatusCode, String)> {
+    let auth = get_header(&headers, "authorization")?;
+    let parts = auth.split(" ");
+    let jwt = parts.last().unwrap_or("");
+    let claims = decode_jwt(&jwt)?;
 
     Ok(claims)
 }

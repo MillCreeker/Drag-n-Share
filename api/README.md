@@ -15,8 +15,24 @@ Ping for health check.
 
 ## GET /session
 
-Get request required by Axum.
-Just another ping -- not intended for actual use.
+Retreives session if JWT indicates that the user already hosts a session.
+
+### Headers
+
+`Authorization: Bearer <JWT>`
+
+### Returns
+
+```JSON
+{
+    "success": true,
+    "response": {
+        "sessionName": String,
+        "sessionId": String,
+        "accessCode": String
+    }
+}
+```
 
 ## POST /session
 

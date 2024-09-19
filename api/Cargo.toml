@@ -16,12 +16,15 @@ name = "utils"
 path = "src/lib/utils.rs"
 
 [dependencies]
-axum = { version = "0.7.5", features = ["ws"]}
+axum = { version = "0.7.5", features = ["ws"] }
 tokio = { version = "1.40.0", features = ["full"] }
 
 futures-util = "0.3.30"
 tokio-stream = "0.1.16"
 tokio-tungstenite = "0.24.0"
+
+tower-http = { version = "0.5.2", features = ["cors"] }
+http = "1.1.0"
 
 axum-client-ip = "0.6.0"
 
@@ -39,6 +42,6 @@ rand = "0.8.5"
 
 sha256 = "1.5.0"
 
-uuid = { version = "1.10.0" , features = ["v4", "fast-rng"] }
+uuid = { version = "1.10.0", features = ["v4", "fast-rng"] }
 
 jsonwebtoken = "9.3.0"
