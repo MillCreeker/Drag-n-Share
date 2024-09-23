@@ -16,7 +16,7 @@ JWT_KEY=abc123
 
 `.env` file in [web_app](./web_app/) folder:
 ```
-API_KEY=abc123
+NUXT_PUBLIC_API_URI=http://api.localhost
 ```
 
 ### Developer Mode

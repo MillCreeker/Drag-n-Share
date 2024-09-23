@@ -1,4 +1,4 @@
-FROM oven/bun:1.1.26
+FROM oven/bun:1.1.29
 
 WORKDIR /app
 
@@ -12,4 +12,4 @@ RUN bun run build
 
 EXPOSE 3000
 
-CMD ["bun", ".output/server/index.mjs"]
+CMD ["NUXT_PUBLIC_API_URI=https://drag-n-share.com", "bun", ".output/server/index.mjs"]

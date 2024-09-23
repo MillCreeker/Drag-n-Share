@@ -1,13 +1,11 @@
 <template>
-    <div>
+    <div class="text-center">
         <p>{{ error.statusCode }}</p>
         <p>{{ error.message }}</p>
-        <button @click="handleClearError">Go Back</button>
+        <NuxtLink to="/">Go Back</NuxtLink>
     </div>
 </template>
 
 <script setup>
-    const { error } = defineProps(['error']);
-
-    const handleClearError = () => clearError({ redirect: '/' });
+defineProps(['error']);
 </script>

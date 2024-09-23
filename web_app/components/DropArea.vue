@@ -10,13 +10,15 @@
 </template>
 
 <script setup>
-let isFileHovering = ref(false);
+const config = useRuntimeConfig();
 
+let isFileHovering = ref(false);
 let isServerOnline = ref(false);
 
-$fetch('http://api.localhost/hmm').then((results) => {
-    isServerOnline.value = true;
-});
+$fetch(`${config.public.apiUri}`)
+    .then((results) => {
+        isServerOnline.value = true;
+    });
 
 onMounted(() => {
     const dropArea = document.getElementById('drop-area');

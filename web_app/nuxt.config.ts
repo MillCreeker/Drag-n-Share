@@ -23,12 +23,14 @@ export default defineNuxtConfig({
                 },
                 {
                     rel: "stylesheet",
-                    href: "../assets/css/materialIcons.css",
+                    href: "css/materialIcons.css",
                 },
             ],
         },
     },
-    // runtimeConfig: {
-    //     apiKey: process.env.API_KEY,
-    // },
+    runtimeConfig: {
+        public: {
+            apiUri: process.env.NUXT_PUBLIC_API_URI,
+        }
+    },
 });
