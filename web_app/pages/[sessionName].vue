@@ -1,5 +1,6 @@
 <template>
     <div>
+
         <Head>
             <Title>Drag-n-Share | {{ sessionName }}</Title>
         </Head>
@@ -12,13 +13,19 @@
 </template>
 
 <script setup>
-    const { sessionName } = useRoute().params;
+const config = useRuntimeConfig();
 
+$fetch(`${config.public.apiUri}/session`).then((res) => {
+    const results = JSON.parse(res);
+    console.log(results);
+}).catch((err) => {
+    createError({
+        statusCode: 500,
+        statusMessage: 'Internal Server Error',
+        message: err.message,
+        fatal: true
+    });
 
-    // TODO
-    const { data } = await useFetch(`/api/files/${sessionName}`);
-
-    if (!data) {
-        throw createError({ statusCode: 404, statusMessage: 'Not found', fatal: true });
-    }
+    navigateTo('/error');
+});
 </script>

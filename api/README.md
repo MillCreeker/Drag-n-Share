@@ -52,7 +52,7 @@ Creates a new session.
 }
 ```
 
-## GET /session/:sessionName
+## GET /idForName/:session_name
 
 Get sessionId for sessionName.
 
@@ -63,6 +63,21 @@ Get sessionId for sessionName.
     "success": true,
     "response": {
         "sessionId": String
+    }
+}
+```
+
+## GET /session/:sessionId
+
+Returns session metadata.
+
+### Returns
+
+```JSON
+{
+    "success": true,
+    "response": {
+        "sessionName": String
     }
 }
 ```

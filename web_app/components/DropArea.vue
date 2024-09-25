@@ -1,9 +1,9 @@
 <template>
-    <div class="flex justify-end mr-8 mt-4">
+    <div class="flex justify-end mr-8 md:mr-16 lg:mr-40 mt-4">
         <i v-if="!isServerOnline" class="material-icons text-orange-500">wifi_off</i>
         <i v-else class="material-icons text-orange-500">wifi</i>
     </div>
-    <div id="drop-area" class="rounded-lg border-dashed border-2 p-4 m-4 mt-0 text-center"
+    <div id="drop-area" class="rounded-lg border-dashed border-2 p-4 m-4 md:mx-8 lg:mx-32 mt-0 text-center"
         :class="{ 'border-yellow-500': isFileHovering, 'border-orange-500': !isFileHovering }">
         <slot></slot>
     </div>
@@ -15,10 +15,33 @@ const config = useRuntimeConfig();
 let isFileHovering = ref(false);
 let isServerOnline = ref(false);
 
+throw createError({
+            statusCode: 500,
+            statusMessage: 'Internal Serve Error',
+            fatal: true
+        });
+
+
+try {
+
 $fetch(`${config.public.apiUri}`)
     .then((results) => {
         isServerOnline.value = true;
+        // throw createError({
+        //     statusCode: 500,
+        //     statusMessage: 'Internal Serve Error',
+        //     fatal: true
+        // });
+    }).catch((err) => {
+        console.error('hmm');
     });
+} catch (err) {
+    // throw createError({
+    //         statusCode: 500,
+    //         statusMessage: 'Internal Serve Error',
+    //         fatal: true
+    //     });
+}
 
 onMounted(() => {
     const dropArea = document.getElementById('drop-area');

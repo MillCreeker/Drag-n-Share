@@ -46,9 +46,10 @@ async fn main() {
     let app = Router::new()
         .route("/", get(ping))
         .route("/session", get(get_session).post(create_session))
+        .route("/idForName/:session_name", get(get_id_for_session_name))
         .route(
             "/session/:session_id",
-            get(get_id_for_session_name)
+            get(get_session_metadata)
                 .options(join_session)
                 .put(update_session)
                 .delete(delete_session),
@@ -187,11 +188,11 @@ async fn create_session(
 async fn get_id_for_session_name(
     rcm: State<ConnectionManager>,
     secure_ip: SecureClientIp,
-    Path(session_id): Path<String>,
+    Path(session_name): Path<String>,
 ) -> Result<(StatusCode, String), (StatusCode, String)> {
     utils::handle_call_rate_limit(rcm.clone(), &secure_ip).await?;
 
-    let key = format!("session:{}", session_id);
+    let key = format!("session:{}", session_name);
 
     if !utils::redis_handler::exists(rcm.clone(), &key).await? {
         return Err((
@@ -212,6 +213,29 @@ async fn get_id_for_session_name(
             "success": true,
             "response": {
                 "sessionId": session_id,
+            }
+        })
+        .to_string(),
+    ))
+}
+
+async fn get_session_metadata(
+    rcm: State<ConnectionManager>,
+    secure_ip: SecureClientIp,
+    Path(session_id): Path<String>,
+) -> Result<(StatusCode, String), (StatusCode, String)> {
+    utils::handle_call_rate_limit(rcm.clone(), &secure_ip).await?;
+    utils::check_session_exists(rcm.clone(), &session_id).await?;
+
+    let key = format!("session:{}", session_id);
+    let session_name = utils::redis_handler::hget(rcm.clone(), &key, "name").await?;
+
+    Ok((
+        StatusCode::OK,
+        json!({
+            "success": true,
+            "response": {
+                "sessionName": session_name
             }
         })
         .to_string(),
