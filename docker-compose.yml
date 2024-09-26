@@ -90,6 +90,8 @@ services:
             - transmittor
         networks:
             - drag_n_share
+        environment:
+            - NUXT_PUBLIC_API_URI=https://api.drag-n-share.com
     
     web-app-dev:
         profiles:
@@ -118,6 +120,8 @@ services:
             - transmittor-dev
         networks:
             - drag_n_share
+        environment:
+            - NUXT_PUBLIC_API_URI=http://api.localhost
     
     nginx:
         profiles:

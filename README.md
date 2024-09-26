@@ -14,11 +14,6 @@ DATABASE_PASSWORD=123456
 JWT_KEY=abc123
 ```
 
-`.env` file in [web_app](./web_app/) folder:
-```
-NUXT_PUBLIC_API_URI=http://api.localhost
-```
-
 ### Developer Mode
 watches for changes
 

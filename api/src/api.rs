@@ -97,7 +97,7 @@ async fn get_session(
     secure_ip: SecureClientIp,
     headers: HeaderMap,
 ) -> Result<(StatusCode, String), (StatusCode, String)> {
-    utils::handle_call_rate_limit(rcm.clone(), &secure_ip).await?;
+    // utils::handle_call_rate_limit(rcm.clone(), &secure_ip).await?;
 
     let claims = utils::decode_jwt_from_header(&headers)?;
     let session_id = claims.aud;
@@ -138,7 +138,7 @@ async fn create_session(
     rcm: State<ConnectionManager>,
     secure_ip: SecureClientIp,
 ) -> Result<(StatusCode, String), (StatusCode, String)> {
-    utils::handle_call_rate_limit(rcm.clone(), &secure_ip).await?;
+    // utils::handle_call_rate_limit(rcm.clone(), &secure_ip).await?;
 
     let key = format!("created.sessions:{}", &secure_ip.0);
     if utils::redis_handler::exists(rcm.clone(), &key).await? {
@@ -190,7 +190,7 @@ async fn get_id_for_session_name(
     secure_ip: SecureClientIp,
     Path(session_name): Path<String>,
 ) -> Result<(StatusCode, String), (StatusCode, String)> {
-    utils::handle_call_rate_limit(rcm.clone(), &secure_ip).await?;
+    // utils::handle_call_rate_limit(rcm.clone(), &secure_ip).await?;
 
     let key = format!("session:{}", session_name);
 
@@ -224,7 +224,7 @@ async fn get_session_metadata(
     secure_ip: SecureClientIp,
     Path(session_id): Path<String>,
 ) -> Result<(StatusCode, String), (StatusCode, String)> {
-    utils::handle_call_rate_limit(rcm.clone(), &secure_ip).await?;
+    // utils::handle_call_rate_limit(rcm.clone(), &secure_ip).await?;
     utils::check_session_exists(rcm.clone(), &session_id).await?;
 
     let key = format!("session:{}", session_id);
@@ -248,7 +248,7 @@ async fn join_session(
     headers: HeaderMap,
     Path(session_id): Path<String>,
 ) -> Result<(StatusCode, String), (StatusCode, String)> {
-    utils::handle_call_rate_limit(rcm.clone(), &secure_ip).await?;
+    // utils::handle_call_rate_limit(rcm.clone(), &secure_ip).await?;
     utils::check_session_exists(rcm.clone(), &session_id).await?;
     let key = format!("access.attempts:{}:{}", session_id, secure_ip.0);
     if utils::redis_handler::get(rcm.clone(), &key).await? == "5" {
@@ -307,7 +307,7 @@ async fn update_session(
     Path(session_id): Path<String>,
     Json(session_name_body): Json<SessionNameBody>,
 ) -> Result<(StatusCode, String), (StatusCode, String)> {
-    utils::handle_call_rate_limit(rcm.clone(), &secure_ip).await?;
+    // utils::handle_call_rate_limit(rcm.clone(), &secure_ip).await?;
     utils::check_session_exists(rcm.clone(), &session_id).await?;
 
     utils::check_user_is_host(&headers, &session_id)?;
@@ -349,7 +349,7 @@ async fn delete_session(
     headers: HeaderMap,
     Path(session_id): Path<String>,
 ) -> Result<(StatusCode, String), (StatusCode, String)> {
-    utils::handle_call_rate_limit(rcm.clone(), &secure_ip).await?;
+    // utils::handle_call_rate_limit(rcm.clone(), &secure_ip).await?;
     utils::check_session_exists(rcm.clone(), &session_id).await?;
 
     utils::check_user_is_host(&headers, &session_id)?;
@@ -397,7 +397,7 @@ async fn get_all_file_metadata_in_session(
     headers: HeaderMap,
     Path(session_id): Path<String>,
 ) -> Result<(StatusCode, String), (StatusCode, String)> {
-    utils::handle_call_rate_limit(rcm.clone(), &secure_ip).await?;
+    // utils::handle_call_rate_limit(rcm.clone(), &secure_ip).await?;
     utils::check_session_exists(rcm.clone(), &session_id).await?;
 
     let user = utils::check_user_is_in_session(&headers, &session_id)?;
@@ -454,7 +454,7 @@ async fn add_files(
     Path(session_id): Path<String>,
     Json(files): Json<Vec<FileMetadataBody>>,
 ) -> Result<(StatusCode, String), (StatusCode, String)> {
-    utils::handle_call_rate_limit(rcm.clone(), &secure_ip).await?;
+    // utils::handle_call_rate_limit(rcm.clone(), &secure_ip).await?;
     utils::check_session_exists(rcm.clone(), &session_id).await?;
 
     let user = utils::check_user_is_in_session(&headers, &session_id)?;
@@ -528,7 +528,7 @@ async fn get_file_metadata(
     headers: HeaderMap,
     Path((session_id, file_name)): Path<(String, String)>,
 ) -> Result<(StatusCode, String), (StatusCode, String)> {
-    utils::handle_call_rate_limit(rcm.clone(), &secure_ip).await?;
+    // utils::handle_call_rate_limit(rcm.clone(), &secure_ip).await?;
     utils::check_session_exists(rcm.clone(), &session_id).await?;
 
     let user = utils::check_user_is_in_session(&headers, &session_id)?;
@@ -580,7 +580,7 @@ async fn delete_file(
     headers: HeaderMap,
     Path((session_id, file_name)): Path<(String, String)>,
 ) -> Result<(StatusCode, String), (StatusCode, String)> {
-    utils::handle_call_rate_limit(rcm.clone(), &secure_ip).await?;
+    // utils::handle_call_rate_limit(rcm.clone(), &secure_ip).await?;
     utils::check_session_exists(rcm.clone(), &session_id).await?;
 
     let user = utils::check_user_is_in_session(&headers, &session_id)?;

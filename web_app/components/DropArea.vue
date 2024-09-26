@@ -15,33 +15,17 @@ const config = useRuntimeConfig();
 let isFileHovering = ref(false);
 let isServerOnline = ref(false);
 
-throw createError({
-            statusCode: 500,
-            statusMessage: 'Internal Serve Error',
-            fatal: true
-        });
 
-
-try {
-
-$fetch(`${config.public.apiUri}`)
+// is server online
+$fetch(`${config.public.apiUri}/`)
     .then((results) => {
         isServerOnline.value = true;
-        // throw createError({
-        //     statusCode: 500,
-        //     statusMessage: 'Internal Serve Error',
-        //     fatal: true
-        // });
-    }).catch((err) => {
-        console.error('hmm');
+        throw createError({
+            statusCode: 500,
+            message: 'Internal Serve Error',
+            fatal: true
+        });
     });
-} catch (err) {
-    // throw createError({
-    //         statusCode: 500,
-    //         statusMessage: 'Internal Serve Error',
-    //         fatal: true
-    //     });
-}
 
 onMounted(() => {
     const dropArea = document.getElementById('drop-area');

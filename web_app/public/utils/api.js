@@ -15,8 +15,21 @@ export function createSession() {
             const response = results.response;
 
             const jwtCookie = useCookie('jwt');
-            jwtCookie.value = `Bearer ${response.JWT}`;
+            jwtCookie.value = response.JWT;
 
             navigateTo(`/${response.sessionId}`);
         });
+}
+
+export async function getIdForSessionName(sessionName) {
+    const config = useRuntimeConfig();
+
+    const res = await $fetch(`${config.public.apiUri}/idForName/${sessionName}`);
+
+    const results = JSON.parse(res);
+
+    if (!results.success) throw 'unsuccessful';
+
+    const response = results.response;
+    return response.sessionId;
 }
