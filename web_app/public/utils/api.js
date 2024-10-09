@@ -15,7 +15,7 @@ export function createSession() {
             const response = results.response;
 
             const jwtCookie = useCookie('jwt');
-            jwtCookie.value = response.JWT;
+            jwtCookie.value = response.jwt;
 
             navigateTo(`/${response.sessionId}`);
         });

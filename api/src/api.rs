@@ -47,10 +47,10 @@ async fn main() {
         .route("/", get(ping))
         .route("/session", get(get_session).post(create_session))
         .route("/idForName/:session_name", get(get_id_for_session_name))
+        .route("/access/:session_id", get(join_session))
         .route(
             "/session/:session_id",
             get(get_session_metadata)
-                .options(join_session)
                 .put(update_session)
                 .delete(delete_session),
         )
@@ -178,7 +178,7 @@ async fn create_session(
                 "sessionName": session_name,
                 "sessionId": session_id,
                 "accessCode": code,
-                "JWT": jwt
+                "jwt": jwt
             }
         })
         .to_string(),
@@ -248,6 +248,7 @@ async fn join_session(
     headers: HeaderMap,
     Path(session_id): Path<String>,
 ) -> Result<(StatusCode, String), (StatusCode, String)> {
+    info!("Testing");
     // utils::handle_call_rate_limit(rcm.clone(), &secure_ip).await?;
     utils::check_session_exists(rcm.clone(), &session_id).await?;
     let key = format!("access.attempts:{}:{}", session_id, secure_ip.0);

@@ -28,25 +28,27 @@
 <script setup>
 import { createSession, getIdForSessionName } from '~/public/utils/api';
 const config = useRuntimeConfig();
-
-// redirect user if they already host a session
 const jwtCookie = useCookie('jwt');
 
-if (typeof jwtCookie.value != 'undefined') {
-    $fetch(`${config.public.apiUri}/session`,
-        {
-            headers: {
-                Authorization: `Bearer ${jwtCookie.value}`
+// redirect user if they already host a session
+if (jwtCookie.value) {
+    try {
+        const data = await $fetch(`${config.public.apiUri}/session`,
+            {
+                headers: {
+                    Authorization: `Bearer ${jwtCookie.value}`
+                }
             }
+        );
+
+        const results = JSON.parse(data);
+
+        if (results.success) {
+            const response = results.response;
+            navigateTo(`/${response.sessionId}`);
         }
-    ).then((res) => {
-        const results = JSON.parse(res);
-
-        if (!results.success) return;
-
-        const response = results.response;
-        navigateTo(`/${response.sessionId}`);
-    });
+    } catch (_) {
+    }
 }
 
 function openFileSelector() {

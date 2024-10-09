@@ -47,7 +47,7 @@ Creates a new session.
         "sessionName": String,
         "sessionId": String,
         "accessCode": String,
-        "JWT": String
+        "jwt": String
     }
 }
 ```
@@ -82,7 +82,7 @@ Returns session metadata.
 }
 ```
 
-## OPTIONS /session/:sessionId
+## GET /access/:sessionId
 
 Join a session.
 
@@ -96,7 +96,7 @@ Join a session.
 {
     "success": true,
     "response": {
-        "JWT": String
+        "jwt": String
     }
 }
 ```

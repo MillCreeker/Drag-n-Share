@@ -15,19 +15,19 @@ const config = useRuntimeConfig();
 let isFileHovering = ref(false);
 let isServerOnline = ref(false);
 
+onMounted( async() => {
+    try {
+        await $fetch(`${config.public.apiUri}/`);
 
-// is server online
-$fetch(`${config.public.apiUri}/`)
-    .then((results) => {
         isServerOnline.value = true;
+    } catch (error) {
         throw createError({
             statusCode: 500,
-            message: 'Internal Serve Error',
+            message: 'The servers are currently offline. We\'re working on it, promise!',
             fatal: true
         });
-    });
+    }
 
-onMounted(() => {
     const dropArea = document.getElementById('drop-area');
 
     dropArea.addEventListener('dragenter', (e) => {
