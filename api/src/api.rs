@@ -78,7 +78,7 @@ async fn ping(
     rcm: State<ConnectionManager>,
     secure_ip: SecureClientIp,
 ) -> Result<(StatusCode, String), (StatusCode, String)> {
-    utils::handle_call_rate_limit(rcm, &secure_ip).await?;
+    // utils::handle_call_rate_limit(rcm, &secure_ip).await?;
 
     let timestamp = utils::get_current_timestamp();
 

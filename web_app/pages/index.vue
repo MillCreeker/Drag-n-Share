@@ -1,11 +1,9 @@
 <template>
     <div>
-        <DropArea>
+        <DropArea createSessionAfterUpload="true">
             <div class="h-[10vh]" />
 
-            <SubtleButton @click="openFileSelector">
-                Upload File(s)
-            </SubtleButton>
+            <UploadButton :createSessionAfterUpload="true" />
 
             <p>or</p>
 
@@ -26,34 +24,35 @@
 </template>
 
 <script setup>
-import { createSession, getIdForSessionName } from '~/public/utils/api';
+import { getIdForSessionName } from '~/public/utils/api';
+import UploadButton from '../components/UploadButton.vue';
 const config = useRuntimeConfig();
 const jwtCookie = useCookie('jwt');
 
-// redirect user if they already host a session
-if (jwtCookie.value) {
-    try {
-        const data = await $fetch(`${config.public.apiUri}/session`,
-            {
-                headers: {
-                    Authorization: `Bearer ${jwtCookie.value}`
+const redirectIfHost = async () => {
+    if (jwtCookie.value) {
+        try {
+            const data = await $fetch(`${config.public.apiUri}/session`,
+                {
+                    headers: {
+                        Authorization: `Bearer ${jwtCookie.value}`
+                    }
                 }
+            );
+
+            const results = JSON.parse(data);
+
+            if (results.success) {
+                const response = results.response;
+                navigateTo(`/${response.sessionId}`);
             }
-        );
-
-        const results = JSON.parse(data);
-
-        if (results.success) {
-            const response = results.response;
-            navigateTo(`/${response.sessionId}`);
+        } catch (_) {
         }
-    } catch (_) {
     }
 }
 
-function openFileSelector() {
-    createSession();
-}
+await redirectIfHost();
+
 
 let sessionName = ref('');
 let showSessionNameInput = ref(false);

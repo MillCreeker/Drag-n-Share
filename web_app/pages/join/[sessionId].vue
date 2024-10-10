@@ -62,7 +62,6 @@ const joinSession = async () => {
         const results = JSON.parse(data);
         if (results.success) {
             const response = results.response;
-            console.log('response', response);
             const jwtCookie = useCookie('jwt');
             jwtCookie.value = response.jwt;
 

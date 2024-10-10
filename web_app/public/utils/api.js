@@ -33,3 +33,7 @@ export async function getIdForSessionName(sessionName) {
     const response = results.response;
     return response.sessionId;
 }
+
+export async function uploadFile(file) {
+    console.log(file);
+}

@@ -10,22 +10,23 @@
 </template>
 
 <script setup>
+import { uploadFile, createSession } from '~/public/utils/api';
+import { convertFiles } from '~/public/utils/utils';
+
 const config = useRuntimeConfig();
+
+const { createSessionAfterUpload } = defineProps(['createSessionAfterUpload']);
 
 let isFileHovering = ref(false);
 let isServerOnline = ref(false);
 
-onMounted( async() => {
+onMounted(async () => {
     try {
         await $fetch(`${config.public.apiUri}/`);
 
         isServerOnline.value = true;
     } catch (error) {
-        throw createError({
-            statusCode: 500,
-            message: 'The servers are currently offline. We\'re working on it, promise!',
-            fatal: true
-        });
+        console.error(error);
     }
 
     const dropArea = document.getElementById('drop-area');
@@ -47,26 +48,29 @@ onMounted( async() => {
         isFileHovering.value = false;
     });
 
-    dropArea.addEventListener('drop', (e) => {
+    dropArea.addEventListener('drop', async (e) => {
         e.preventDefault();
         e.stopPropagation();
 
-        // const files = e.dataTransfer.files;
-        // const dT = new DataTransfer();
-
-        // for (let i = 0; i < files.length; i++) {
-        //     const file = files[i];
-        //     dT.items.add(file);
-        // }
-
-        // const workableFiles = dT.files;
-        // console.log(files);
-
-        // const base64 = toBase64(workableFiles[0]).then((b64) => {
-        //     console.log(b64);
-        // });
-
         isFileHovering.value = false;
+
+        const rawFiles = e.dataTransfer.files;
+        const dT = new DataTransfer();
+
+        for (let i = 0; i < rawFiles.length; i++) {
+            const file = rawFiles[i];
+            dT.items.add(file);
+        }
+        
+        const files = await convertFiles(dT.files);
+
+        for (let i = 0; i < files.length; i++) {
+            await uploadFile(files[i]);
+        }
+
+        if (createSessionAfterUpload) {
+            await createSession();
+        }
     });
 
     function isFileInContainer(e) {
@@ -83,14 +87,14 @@ onMounted( async() => {
         return isInContainer;
     };
 
-    function toBase64(file) {
-        return new Promise((resolve, reject) => {
-            const reader = new FileReader();
-            reader.readAsDataURL(file);
-            reader.onload = () => resolve(reader.result);
-            reader.onerror = error => reject(error);
-        })
-    };
+    // function toBase64(file) {
+    //     return new Promise((resolve, reject) => {
+    //         const reader = new FileReader();
+    //         reader.readAsDataURL(file);
+    //         reader.onload = () => resolve(reader.result);
+    //         reader.onerror = error => reject(error);
+    //     })
+    // };
 
     window.addEventListener('dragover', (e) => {
         e.preventDefault();
