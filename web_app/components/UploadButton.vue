@@ -4,25 +4,28 @@
             <i class="material-icons text-3xl">upload</i>
             <span class="ml-2">Upload File(s)</span>
         </label>
-        <input type="file" multiple @change="uploadFiles" id="file-upload" class="hidden" />
+        <input type="file" multiple @change="_uploadFiles" id="file-upload" class="hidden" />
     </div>
 </template>
 
 <script setup>
-import { uploadFile, createSession } from '~/public/utils/api';
+import { uploadFiles, createSession } from '~/public/utils/api';
 import { convertFiles } from '~/public/utils/utils';
+const route = useRoute();
 
-const { createSessionAfterUpload } = defineProps(['createSessionAfterUpload']);
+const { createSessionBeforeUpload, cbRefresh } = defineProps(['createSessionBeforeUpload', 'cbRefresh']);
 
-async function uploadFiles(event) {
+async function _uploadFiles(event) {
     const files = await convertFiles(event.srcElement.files);
 
-    for (let i = 0; i < files.length; i++) {
-        await uploadFile(files[i]);
+    if (createSessionBeforeUpload) {
+        await createSession(files);
+        return;
     }
 
-    if (createSessionAfterUpload) {
-        await createSession();
-    }
+    const sessionId = route.path.split('/')[1];
+    await uploadFiles(files, sessionId);
+
+    cbRefresh();
 }
 </script>

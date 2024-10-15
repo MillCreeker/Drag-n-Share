@@ -10,23 +10,29 @@
 </template>
 
 <script setup>
-import { uploadFile, createSession } from '~/public/utils/api';
+import { uploadFiles, createSession } from '~/public/utils/api';
 import { convertFiles } from '~/public/utils/utils';
-
+const route = useRoute();
 const config = useRuntimeConfig();
 
-const { createSessionAfterUpload } = defineProps(['createSessionAfterUpload']);
+const { createSessionBeforeUpload, cbRefresh } = defineProps(['createSessionBeforeUpload', 'cbRefresh']);
 
 let isFileHovering = ref(false);
 let isServerOnline = ref(false);
 
 onMounted(async () => {
     try {
-        await $fetch(`${config.public.apiUri}/`);
+        await $fetch(`${config.public.apiUri}/`,
+            { server: false }
+        );
 
         isServerOnline.value = true;
     } catch (error) {
-        console.error(error);
+        throw createError({
+            statusCode: 500,
+            statusMessage: 'Servers are currently offline. We\'re working on it, promis.',
+            fatal: true
+        });
     }
 
     const dropArea = document.getElementById('drop-area');
@@ -61,16 +67,18 @@ onMounted(async () => {
             const file = rawFiles[i];
             dT.items.add(file);
         }
-        
+
         const files = await convertFiles(dT.files);
 
-        for (let i = 0; i < files.length; i++) {
-            await uploadFile(files[i]);
+        if (createSessionBeforeUpload) {
+            await createSession(files);
+            return;
         }
 
-        if (createSessionAfterUpload) {
-            await createSession();
-        }
+        const sessionId = route.path.split('/')[1];
+        await uploadFiles(files, sessionId);
+
+        cbRefresh();
     });
 
     function isFileInContainer(e) {
@@ -86,15 +94,6 @@ onMounted(async () => {
 
         return isInContainer;
     };
-
-    // function toBase64(file) {
-    //     return new Promise((resolve, reject) => {
-    //         const reader = new FileReader();
-    //         reader.readAsDataURL(file);
-    //         reader.onload = () => resolve(reader.result);
-    //         reader.onerror = error => reject(error);
-    //     })
-    // };
 
     window.addEventListener('dragover', (e) => {
         e.preventDefault();

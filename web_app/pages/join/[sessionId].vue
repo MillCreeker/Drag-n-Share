@@ -16,6 +16,8 @@
 </template>
 
 <script setup>
+
+import { onMounted } from 'vue';
 const config = useRuntimeConfig();
 
 let sessionName = ref('');
@@ -24,19 +26,6 @@ let code = ref('');
 
 const route = useRoute();
 const sessionId = route.path.split('/')[2];
-
-try {
-    const data = await $fetch(`${config.public.apiUri}/session/${sessionId}`, {
-        method: 'GET'
-    });
-
-    const results = JSON.parse(data);
-    if (results.success) {
-        sessionName.value = results.response.sessionName;
-    }
-} catch (error) {
-    navigateTo('/');
-}
 
 const formatCode = () => {
     code.value = formattedCode.value.replace(/\D/g, '');
@@ -82,4 +71,20 @@ const encodeSha256 = async (input) => {
 
     return hash;
 }
+
+onMounted(async () => {
+    try {
+        const data = await $fetch(`${config.public.apiUri}/session/${sessionId}`, {
+            method: 'GET',
+            server: false
+        });
+
+        const results = JSON.parse(data);
+        if (results.success) {
+            sessionName.value = results.response.sessionName;
+        }
+    } catch (error) {
+        navigateTo('/');
+    }
+});
 </script>

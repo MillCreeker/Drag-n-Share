@@ -1,9 +1,9 @@
 <template>
     <div>
-        <DropArea createSessionAfterUpload="true">
+        <DropArea createSessionBeforeUpload="true">
             <div class="h-[10vh]" />
 
-            <UploadButton :createSessionAfterUpload="true" />
+            <UploadButton :createSessionBeforeUpload="true" />
 
             <p>or</p>
 
@@ -26,8 +26,13 @@
 <script setup>
 import { getIdForSessionName } from '~/public/utils/api';
 import UploadButton from '../components/UploadButton.vue';
+import { onMounted } from 'vue';
 const config = useRuntimeConfig();
 const jwtCookie = useCookie('jwt');
+
+
+let sessionName = ref('');
+let showSessionNameInput = ref(false);
 
 const redirectIfHost = async () => {
     if (jwtCookie.value) {
@@ -36,7 +41,8 @@ const redirectIfHost = async () => {
                 {
                     headers: {
                         Authorization: `Bearer ${jwtCookie.value}`
-                    }
+                    },
+                    server: false
                 }
             );
 
@@ -49,19 +55,13 @@ const redirectIfHost = async () => {
         } catch (_) {
         }
     }
-}
-
-await redirectIfHost();
-
-
-let sessionName = ref('');
-let showSessionNameInput = ref(false);
+};
 
 const toggleSessionNameInput = () => {
     showSessionNameInput.value = !showSessionNameInput.value;
     const sessionInput = document.getElementById('sessionInput');
     sessionInput.focus();
-}
+};
 
 const joinSession = async () => {
     sessionName.value = sessionName.value.trim();
@@ -73,5 +73,9 @@ const joinSession = async () => {
         // TODO show it doesn't exist
         console.error(err);
     }
-}
+};
+
+onMounted(async () => {
+    await redirectIfHost();
+});
 </script>

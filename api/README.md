@@ -165,7 +165,7 @@ Returns all files in a session.
         {
             "name": String,
             "size": Number,
-            "isOwner": Boolean
+            "is_owner": Boolean
         }
     ]
 }
@@ -215,7 +215,7 @@ Get file metadata.
     "response": {
         "name": String,
         "size": Number,
-        "isOwner": Boolean
+        "is_owner": Boolean
     }
 }
 ```
