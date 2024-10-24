@@ -236,3 +236,136 @@ Only possible, if the JWT indicates the user is the owner of the session or the 
     "response": <confirmation message>
 }
 ```
+
+# Transmittor
+
+## GET /
+
+Ping for health check.
+
+### Returns
+
+```JSON
+{
+    "success": true,
+    "response": timestamp
+}
+```
+
+## GET /session/:sessionId
+
+Connects to a websocket.
+Requires a valid JWT of a user who joined the session.
+Based on the `command`, a different function is being executed.
+
+The `data` parameter is an object that depends on the `command`.
+
+### Body
+
+```JSON
+{
+    "jwt": String,
+    "command": String,
+    "data": Object,
+}
+```
+
+### Returns
+
+```JSON
+{
+    "success": bool,
+    "command": String,
+    "data": Object,
+}
+```
+
+### Commands - Request
+
+#### request-file
+
+```JSON
+"data": {
+    "public_key": String,
+    "filename": String
+}
+```
+
+#### acknowledge-file-request
+
+```JSON
+"data": {
+    "public_key": String,
+    "amount_of_chunks": Number,
+    "filename": String,
+    "user_id": String,
+}
+```
+
+#### ready-for-file-transfer
+
+```JSON
+"data": {
+    "request_id": String,
+}
+```
+
+#### add-chunk
+
+```JSON
+"data": {
+    "request_id": String,
+    "chunk_nr": Number,
+    "chunk": String,
+    "iv": String
+}
+```
+
+#### received-chunk
+
+```JSON
+"data": {
+    "request_id": String,
+    "chunk_nr": Number
+}
+````
+
+### Commands - Response
+
+#### acknowledge-file-request
+
+```JSON
+"data": {
+    "request_id": String,
+    "public_key": String,
+    "filename": String
+}
+```
+
+#### prepare-for-file-transfer
+
+```JSON
+"data": {
+    "request_id": String,
+    "public_key": String,
+    "amount_of_chunks": Number
+}
+```
+
+#### send-next-chunk
+
+```JSON
+"data": {
+    "request_id": String,
+    "last_chunk_nr": Number
+}
+```
+
+#### add-chunk
+
+```JSON
+"data": {
+    "request_id": String,
+    "chunk_nr": Number
+}
+```

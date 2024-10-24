@@ -8,7 +8,7 @@ use axum_client_ip::SecureClientIp;
 use rand::seq::SliceRandom;
 use redis::aio::ConnectionManager;
 
-use log::error;
+use log::{error, info};
 
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -346,4 +346,31 @@ pub fn sha256(s: &str) -> String {
 
 pub fn get_uuid() -> String {
     Uuid::new_v4().to_string()
+}
+
+pub fn deserialize_data<T: serde::de::DeserializeOwned>(data: &String) -> Result<T, String> {
+    match serde_json::from_str::<T>(&data) {
+        Ok(data) => Ok(data),
+        Err(_) => Err("Wrong data format".to_string()),
+    }
+}
+
+pub fn handle_redis_error<T>(result: Result<T, (StatusCode, String)>) -> Result<T, String> {
+    match result {
+        Ok(v) => Ok(v),
+        Err((_, e)) => Err(format!("Error connecting to Redis: {}", e)),
+    }
+}
+
+pub async fn check_user_is_in_file_request(
+    rcm: State<ConnectionManager>,
+    request_id: &String,
+    user_id: &String,
+) -> Result<(), String> {
+    let key = format!("file.req.users:{}", &request_id);
+    handle_redis_error(
+        redis_handler::sismember(rcm, &key, &user_id).await,
+    ).map_err(|_| "User not in file request")?;
+
+    Ok(())
 }

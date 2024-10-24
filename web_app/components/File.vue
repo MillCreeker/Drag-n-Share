@@ -17,11 +17,12 @@
 </template>
 
 <script setup>
+import { onMounted } from 'vue';
 import { deleteFile } from '~/public/utils/api';
 
 const route = useRoute();
 
-const { filename, size, isOwner, cbRefresh } = defineProps(['filename', 'size', 'isOwner', 'cbRefresh']);
+const { filename, size, isOwner, cbRefresh, cbDownload } = defineProps(['filename', 'size', 'isOwner', 'cbRefresh', 'cbDownload']);
 
 const _deleteFile = async () => {
     const sessionId = route.path.split('/')[1];
@@ -30,6 +31,6 @@ const _deleteFile = async () => {
 };
 
 const _downloadFile = async () => {
-    console.log(filename);
+    await cbDownload(filename);
 };
 </script>

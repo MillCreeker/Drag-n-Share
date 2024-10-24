@@ -32,8 +32,8 @@
                 <div v-if="files.length !== 0">
                     <ul class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3">
                         <li v-for="file in files" :key="file.name" class="m-2">
-                            <File :filename="file.name" :size="file.size" :isOwner="file.isOwner"
-                                :cbRefresh="loadData" />
+                            <File :filename="file.name" :size="file.size" :isOwner="file.isOwner" :cbRefresh="loadData"
+                                :cbDownload="downloadFile" />
                         </li>
                     </ul>
                 </div>
@@ -72,6 +72,8 @@ let isEditing = ref(false);
 let files = ref([]);
 
 const jwtCookie = useCookie('jwt');
+
+let socket;
 
 const loadData = async () => {
     if (jwtCookie.value) {
@@ -133,6 +135,28 @@ const loadData = async () => {
     }
 };
 
+const connectToWebSocket = async () => {
+    socket = new WebSocket(`${config.public.wsUri}/session/${sessionId.value}`);
+
+    socket.onopen = () => {
+        console.log('Connected to WebSocket');
+    };
+
+    socket.onmessage = (event) => {
+        const data = JSON.parse(event.data);
+        console.log('Received:', data);
+    };
+
+    socket.onclose = () => {
+        console.log('Disconnected from WebSocket');
+        setTimeout(connectToWebSocket, 100);
+    };
+
+    socket.onerror = (error) => {
+        console.error('WebSocket error:', error);
+    };
+};
+
 const updateSessionName = async () => {
     sessionName.value = sessionName.value.trim();
     isEditing.value = false;
@@ -190,7 +214,16 @@ const deleteSession = async () => {
     }
 };
 
+const downloadFile = async (filename) => {
+    socket.send(JSON.stringify({
+        jwt: jwtCookie.value,
+        command: 'request-file',
+        data: filename
+    }));
+}
+
 onMounted(async () => {
     await loadData();
+    await connectToWebSocket();
 });
 </script>

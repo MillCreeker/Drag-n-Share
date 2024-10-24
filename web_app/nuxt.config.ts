@@ -31,6 +31,8 @@ export default defineNuxtConfig({
     runtimeConfig: {
         public: {
             apiUri: process.env.NUXT_PUBLIC_API_URI,
+            wsUri: process.env.NUXT_PUBLIC_WS_URI,
+            trnsUri: process.env.NUXT_PUBLIC_TRNS_URI,
         },
     }
 });

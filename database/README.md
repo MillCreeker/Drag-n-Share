@@ -44,10 +44,12 @@ File metadata.
 ```
 
 ## created.sessions:\<ip\>
+
 Keeps track of created sessions.
 Users should only be able to create one session per IP.
 
 ### Data Structure
+
 `<session.id>`
 
 ## access.attempts:\<session.id\>:\<ip\>
@@ -67,3 +69,92 @@ To limit the call rate.
 ### Data Structure
 
 `<ip>`
+
+---
+
+---
+
+## SET file.reqs:\<session.id\>
+
+List of all file requests in a session.
+
+### Data Structure
+
+`<filename>`
+
+## SET file.reqs:\<session.id\>:\<filename\>
+
+List of users requesting a particular file.
+
+### Data Structure
+
+`<user.id>`
+
+## file.req:\<session.id\>:\<filename\>:\<user.id\>
+
+Public key of user requesting file.
+
+### Data Structure
+
+`<public.key>`
+
+## file.req.ackn:\<session.id\>:\<filename\>:\<user.id\>
+
+Session ID of user acknowledging request.
+
+### Data Structure
+
+`<request.id>`
+
+## SET file.req.users:\<request.id\>
+
+List of users as part of a file request.
+Will be validated using JWT.
+
+### Data Structure
+
+`<user.id>`
+
+## HASH file.req.prep:\<request.id\>
+
+Data for preparing file request.
+
+### Data Structure
+
+```JSON
+{
+    "public.key": String,
+    "amount.of.chunks": Number
+}
+```
+
+## file.req.ready:\<request.id\>
+
+Existance of this key indicates that the file is ready to be transmitted.
+
+### Data Structure
+
+`true`
+
+## LIST file.req.chunks:\<request.id\>
+
+Queue of file chunks.
+Left in, right out.
+
+Chunks can only be of a certain size.
+There is also a limit to the amount of chunks in the queue.
+
+### Data Structure
+
+`<chunk.nr>@<chunk>`
+
+## LIST file.req.iv:\<request.id\>
+
+Queue of file chunk IVs.
+Left in, right out.
+
+Acts as an extra layer of security with which the chunks are encrypted.
+
+### Data Structure
+
+`<chunk.nr>@<iv>`
