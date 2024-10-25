@@ -255,12 +255,15 @@ Ping for health check.
 ## GET /session/:sessionId
 
 Connects to a websocket.
-Requires a valid JWT of a user who joined the session.
 Based on the `command`, a different function is being executed.
 
 The `data` parameter is an object that depends on the `command`.
 
-### Body
+### Request
+
+Requires a valid JWT of a user who joined the session.
+
+#### Body
 
 ```JSON
 {
@@ -270,17 +273,22 @@ The `data` parameter is an object that depends on the `command`.
 }
 ```
 
-### Returns
+#### Returns
 
 ```JSON
 {
     "success": bool,
-    "command": String,
-    "data": Object,
+    "response": String,
 }
 ```
 
 ### Commands - Request
+
+#### register
+
+```JSON
+"data": {}
+```
 
 #### request-file
 
@@ -321,22 +329,26 @@ The `data` parameter is an object that depends on the `command`.
 }
 ```
 
-#### received-chunk
+### Messages
+
+Messages send from the websocket indipendently.
+
+### Sends
 
 ```JSON
-"data": {
+{   
     "request_id": String,
-    "chunk_nr": Number
+    "command": String,
+    "data": Object,
 }
-````
+```
 
-### Commands - Response
+### Commands - Messages
 
 #### acknowledge-file-request
 
 ```JSON
 "data": {
-    "request_id": String,
     "public_key": String,
     "filename": String
 }
@@ -346,7 +358,6 @@ The `data` parameter is an object that depends on the `command`.
 
 ```JSON
 "data": {
-    "request_id": String,
     "public_key": String,
     "amount_of_chunks": Number
 }
@@ -356,7 +367,6 @@ The `data` parameter is an object that depends on the `command`.
 
 ```JSON
 "data": {
-    "request_id": String,
     "last_chunk_nr": Number
 }
 ```
@@ -365,7 +375,6 @@ The `data` parameter is an object that depends on the `command`.
 
 ```JSON
 "data": {
-    "request_id": String,
     "chunk_nr": Number
 }
 ```

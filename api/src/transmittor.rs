@@ -33,6 +33,8 @@ use std::net::SocketAddr;
 use env_logger::Env;
 use log::{error, info};
 
+const MAX_QUEUE_SIZE: i64 = 16;
+
 #[tokio::main]
 async fn main() {
     env_logger::Builder::from_env(Env::default().default_filter_or("info")).init();
@@ -92,7 +94,6 @@ async fn ws_handler(
     ws.on_upgrade(|ws| ws_handler_inner(rcm, secure_ip, session_id, ws))
 }
 
-#[allow(unused_variables)] // TODO
 async fn ws_handler_inner(
     rcm: State<ConnectionManager>,
     secure_ip: SecureClientIp,
@@ -103,14 +104,7 @@ async fn ws_handler_inner(
 
     // create a watch channel to signal shutdown
     let (shutdown_tx, shutdown_rx) = watch::channel(());
-
-    // spawn the Redis listeners, passing the shutdown receiver to each one
-    let _listener1 = tokio::spawn(redis_listener(ws.clone(), rcm.clone(), shutdown_rx.clone()));
-    // let _listener2 = tokio::spawn(redis_listener(
-    //     ws.clone(),
-    //     rcm.clone(),
-    //     shutdown_rx.clone(),
-    // ));
+    let mut listener_spawned = false;
 
     // listen for incoming messages and process them
     while let Some(Ok(message)) = ws.lock().await.next().await {
@@ -128,7 +122,7 @@ async fn ws_handler_inner(
                                 Some(claims.sub)
                             }
                         }
-                        Err(e) => {
+                        Err(_) => {
                             error!("Failed to decode JWT: {}", request.jwt);
                             None
                         }
@@ -140,6 +134,26 @@ async fn ws_handler_inner(
                         Ok(Response {
                             success: false,
                             response: "No user ID".to_string(),
+                        })
+                    } else if request.command == "register" && listener_spawned {
+                        Ok(Response {
+                            success: false,
+                            response: "Already registered.".to_string(),
+                        })
+                    } else if request.command == "register" && !listener_spawned {
+                        let _listener = tokio::spawn(redis_listener(
+                            ws.clone(),
+                            rcm.clone(),
+                            shutdown_rx.clone(),
+                            session_id.clone(),
+                            user_id.unwrap_or("".to_string().clone()),
+                        ));
+
+                        listener_spawned = true;
+
+                        Ok(Response {
+                            success: true,
+                            response: "Registered".to_string(),
                         })
                     } else if request.command == "request-file" {
                         request_file(
@@ -160,7 +174,6 @@ async fn ws_handler_inner(
                     } else if request.command == "ready-for-file-transfer" {
                         ready_for_file_transfer(
                             rcm.clone(),
-                            &session_id,
                             &user_id.unwrap_or("".to_string()),
                             &request.data,
                         )
@@ -168,15 +181,6 @@ async fn ws_handler_inner(
                     } else if request.command == "add-chunk" {
                         add_chunk(
                             rcm.clone(),
-                            &session_id,
-                            &user_id.unwrap_or("".to_string()),
-                            &request.data,
-                        )
-                        .await
-                    } else if request.command == "received-chunk" {
-                        received_chunk(
-                            rcm.clone(),
-                            &session_id,
                             &user_id.unwrap_or("".to_string()),
                             &request.data,
                         )
@@ -215,43 +219,71 @@ async fn ws_handler_inner(
     info!("WebSocket closed, sent shutdown signal to listeners.");
 }
 
-#[allow(unused_variables)] // TODO
+trait WsMsgData {}
+
+#[derive(Serialize)]
+struct WsMessage<T: WsMsgData> {
+    request_id: String,
+    command: String,
+    data: T,
+}
+
+#[derive(Serialize)]
+struct WsMsgAcknowledgeFileRequest {
+    public_key: String,
+    filename: String,
+}
+impl WsMsgData for WsMsgAcknowledgeFileRequest {}
+
+#[derive(Serialize)]
+struct WsMsgPrepareForFileTransfer {
+    public_key: String,
+    amount_of_chunks: u32,
+}
+impl WsMsgData for WsMsgPrepareForFileTransfer {}
+
+#[derive(Serialize)]
+struct WsMsgSendNextChunk {
+    last_chunk_nr: u32,
+}
+impl WsMsgData for WsMsgSendNextChunk {}
+
+#[derive(Serialize)]
+struct WsMsgAddChunk {
+    chunk_nr: u32,
+}
+impl WsMsgData for WsMsgAddChunk {}
+
 async fn redis_listener(
     ws: Arc<Mutex<WebSocket>>,
     rcm: State<ConnectionManager>,
     mut shutdown_signal: watch::Receiver<()>,
+    session_id: String,
+    user_id: String,
 ) {
-    let mut interval = time::interval(Duration::from_secs(1)); // poll every second
+    let mut interval = time::interval(Duration::from_millis(100));
 
     loop {
         tokio::select! {
             _ = interval.tick() => {
-                // rcm.sismember(key, member)
-                // Check Redis for a specific key/value update
-                // match redis_connection.clone().get::<String, Option<String>>(channel.clone()).await {
-                //     Ok(Some(value)) => {
-                //         // Send the value found in Redis to the WebSocket
-                //         let response = Response {
-                //             success: true,
-                //             response: format!("Found update in Redis: {}", value),
-                //         };
-                //         let json = serde_json::to_string(&response).unwrap_or_else(|_| {
-                //             "{\"success\":false,\"response\":\"Serialization error\"}".to_string()
-                //         });
-
-                //         if let Err(e) = ws.send(Message::Text(json)).await {
-                //             error!("Failed to send message: {}", e);
-                //             return;
-                //         }
-                //     }
-                //     Ok(None) => {
-                //         // No update found; you can log or perform other actions here
-                //     }
-                //     Err(e) => {
-                //         error!("Failed to query Redis: {}", e);
-                //     }
-                // }
                 info!("Tick");
+
+                // acknowledge-file-request \\
+                match msg_acknowledge_file_request(ws.clone(), rcm.clone(), &session_id, &user_id).await {
+                    Ok(_) => (),
+                    Err(e) => {
+                        error!("Failed to acknowledge file request: {}", e);
+                        continue;
+                    },
+                }
+
+                // prepare-for-file-transfer \\
+
+
+                // send-next-chunk \\
+
+
+                // add-chunk \\
             }
 
             _ = shutdown_signal.changed() => {
@@ -340,6 +372,15 @@ async fn acknowledge_file_request(
     )?;
     utils::handle_redis_error(utils::redis_handler::sadd(rcm.clone(), &key, &user_id, None).await)?;
 
+    let key = format!("file.reqs:{}", &data.user_id);
+    utils::handle_redis_error(
+        utils::redis_handler::sadd(rcm.clone(), &key, &request_id, None).await,
+    )?;
+    let key = format!("file.reqs:{}", &user_id);
+    utils::handle_redis_error(
+        utils::redis_handler::sadd(rcm.clone(), &key, &request_id, None).await,
+    )?;
+
     let items = [
         ("public.key", data.public_key.as_str()),
         ("amount.of.chunks", &data.amount_of_chunks.to_string()),
@@ -350,11 +391,11 @@ async fn acknowledge_file_request(
         utils::redis_handler::hset_multiple(rcm.clone(), &key, &items, None).await,
     )?;
 
-    let key = format!(
-        "file.req:{}:{}:{}",
-        &session_id, &data.filename, &data.user_id
-    );
-    utils::handle_redis_error(utils::redis_handler::del(rcm, &key).await)?;
+    // let key = format!(
+    //     "file.req:{}:{}:{}",
+    //     &session_id, &data.filename, &data.user_id
+    // );
+    // utils::handle_redis_error(utils::redis_handler::del(rcm, &key).await)?;
 
     Ok(Response {
         success: true,
@@ -369,7 +410,6 @@ struct ReqReadyForFileRequest {
 
 async fn ready_for_file_transfer(
     rcm: State<ConnectionManager>,
-    session_id: &String,
     user_id: &String,
     data: &String,
 ) -> Result<Response, String> {
@@ -381,7 +421,7 @@ async fn ready_for_file_transfer(
     utils::handle_redis_error(utils::redis_handler::set(rcm.clone(), &key, "true", None).await)?;
 
     let key = format!("file.req.prep:{}", &data.request_id);
-    utils::handle_redis_error(utils::redis_handler::del(rcm.clone(), &key).await)?;
+    utils::handle_redis_error(utils::redis_handler::del(rcm, &key).await)?;
 
     Ok(Response {
         success: true,
@@ -399,7 +439,6 @@ struct ReqAddChunk {
 
 async fn add_chunk(
     rcm: State<ConnectionManager>,
-    session_id: &String,
     user_id: &String,
     data: &String,
 ) -> Result<Response, String> {
@@ -407,8 +446,20 @@ async fn add_chunk(
 
     utils::check_user_is_in_file_request(rcm.clone(), &data.request_id, user_id).await?;
 
-    // TODO
-    // lpush, rpop, rpush
+    let key = format!("file.req.chunks:{}", &data.request_id);
+    let queue_size =
+        utils::handle_redis_error(utils::redis_handler::llen(rcm.clone(), &key).await)?;
+
+    if queue_size >= MAX_QUEUE_SIZE {
+        return Err("Queue is full".to_string());
+    }
+
+    if queue_size == data.chunk_nr as i64 {
+        return Err("Chunk already in queue".to_string());
+    }
+
+    let queue_data = format!("{}@{}@{}", &data.chunk_nr, &data.iv, &data.chunk);
+    utils::handle_redis_error(utils::redis_handler::lpush(rcm, &key, &queue_data).await)?;
 
     Ok(Response {
         success: true,
@@ -416,26 +467,61 @@ async fn add_chunk(
     })
 }
 
-#[derive(Deserialize)]
-struct ReqReceivedChunk {
-    request_id: String,
-    chunk_nr: u32,
-}
-
-async fn received_chunk(
+async fn msg_acknowledge_file_request(
+    ws: Arc<Mutex<WebSocket>>,
     rcm: State<ConnectionManager>,
     session_id: &String,
     user_id: &String,
-    data: &String,
-) -> Result<Response, String> {
-    let data = utils::deserialize_data::<ReqReceivedChunk>(&data)?;
+) -> Result<(), String> {
+    let user_files = match utils::get_user_files(rcm.clone(), &session_id, &user_id).await {
+        Ok(files) => files,
+        Err(_) => Vec::new(),
+    };
 
-    utils::check_user_is_in_file_request(rcm.clone(), &data.request_id, user_id).await?;
+    if user_files.is_empty() {
+        return Ok(())
+    }
 
-    // TODO
+    for file in user_files {
+        let key = format!("file.reqs:{}", &session_id);
+        match utils::redis_handler::sismember(rcm.clone(), &key, &file).await {
+            Ok(_) => (),
+            Err(_) => continue,
+        };
 
-    Ok(Response {
-        success: true,
-        response: "".to_string(),
-    })
+        let key = format!("file.reqs:{}:{}", &session_id, &file);
+        let users = match utils::redis_handler::smembers(rcm.clone(), &key).await {
+            Ok(users) => users,
+            Err(_) => continue,
+        };
+
+        for user in users {
+            let key = format!("file.req:{}:{}:{}", &session_id, &file, &user);
+            let public_key = match utils::redis_handler::get(rcm.clone(), &key).await {
+                Ok(public_key) => public_key,
+                Err(_) => continue,
+            };
+
+            match utils::redis_handler::del(rcm.clone(), &key).await {
+                Ok(_) => (),
+                Err(_) => (),
+            };
+
+            let message = WsMessage {
+                request_id: "".to_string(),
+                command: "acknowledge-file-request".to_string(),
+                data: WsMsgAcknowledgeFileRequest {
+                    public_key: public_key.clone(),
+                    filename: file.clone(),
+                },
+            };
+
+            let message_str = serde_json::to_string(&message).unwrap();
+            if let Err(e) = ws.lock().await.send(Message::Text(message_str)).await {
+                error!("Failed to send message: {}", e);
+            }
+        }
+    }
+
+    Ok(())
 }

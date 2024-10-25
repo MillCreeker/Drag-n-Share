@@ -115,6 +115,14 @@ Will be validated using JWT.
 
 `<user.id>`
 
+## SET file.reqs:\<user.id\>
+
+List of files requested a user is involved in.
+
+### Data Structure
+
+`<request.id>`
+
 ## HASH file.req.prep:\<request.id\>
 
 Data for preparing file request.
@@ -138,7 +146,7 @@ Existance of this key indicates that the file is ready to be transmitted.
 
 ## LIST file.req.chunks:\<request.id\>
 
-Queue of file chunks.
+Queue of file chunks + IV.
 Left in, right out.
 
 Chunks can only be of a certain size.
@@ -146,15 +154,4 @@ There is also a limit to the amount of chunks in the queue.
 
 ### Data Structure
 
-`<chunk.nr>@<chunk>`
-
-## LIST file.req.iv:\<request.id\>
-
-Queue of file chunk IVs.
-Left in, right out.
-
-Acts as an extra layer of security with which the chunks are encrypted.
-
-### Data Structure
-
-`<chunk.nr>@<iv>`
+`<chunk.nr>@<iv>@<chunk>`

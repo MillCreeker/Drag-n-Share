@@ -368,9 +368,46 @@ pub async fn check_user_is_in_file_request(
     user_id: &String,
 ) -> Result<(), String> {
     let key = format!("file.req.users:{}", &request_id);
-    handle_redis_error(
-        redis_handler::sismember(rcm, &key, &user_id).await,
-    ).map_err(|_| "User not in file request")?;
+    handle_redis_error(redis_handler::sismember(rcm, &key, &user_id).await)
+        .map_err(|_| "User not in file request")?;
 
     Ok(())
+}
+
+pub async fn get_user_files(
+    rcm: State<ConnectionManager>,
+    session_id: &String,
+    user_id: &String,
+) -> Result<Vec<String>, String> {
+    let key = format!("files:{}", &session_id);
+    let files = match redis_handler::smembers(rcm.clone(), &key).await {
+        Ok(files) => Some(files),
+        Err(_) => None,
+    };
+
+    if files.is_none() {
+        return Ok(Vec::new());
+    }
+
+    let files = files.unwrap();
+
+    let mut user_files: Vec<String> = Vec::new();
+    for file in files {
+        let key = format!("files:{}:{}", &session_id, &file);
+        let owner_id = match redis_handler::hget(rcm.clone(), &key, "owner.id").await {
+            Ok(owner_id) => Some(owner_id),
+            Err(_) => None,
+        };
+
+        if owner_id.is_none() {
+            continue;
+        }
+        let owner_id = owner_id.unwrap();
+
+        if &owner_id == user_id {
+            user_files.push(file);
+        }
+    }
+
+    Ok(user_files)
 }

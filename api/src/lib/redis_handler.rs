@@ -315,3 +315,67 @@ pub async fn hgetall(
         }
     }
 }
+
+pub async fn lpush(
+    mut rcm: State<ConnectionManager>,
+    ref key: &str,
+    ref val: &str,
+) -> Result<(), (StatusCode, String)> {
+    match rcm.lpush::<&str, &str, String>(&key, &val).await {
+        Ok(_) => Ok(()),
+        Err(e) => {
+            error!("lpush: {:?}", e);
+
+            return Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                json!({
+                    "success": false,
+                    "message": DB_ERROR_MSG
+                })
+                .to_string(),
+            ));
+        }
+    }
+}
+
+pub async fn rpop(
+    mut rcm: State<ConnectionManager>,
+    ref key: &str,
+) -> Result<String, (StatusCode, String)> {
+    match rcm.rpop(&key, None).await {
+        Ok(v) => Ok(v),
+        Err(e) => {
+            error!("rpop: {:?}", e);
+
+            return Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                json!({
+                    "success": false,
+                    "message": DB_ERROR_MSG
+                })
+                .to_string(),
+            ));
+        }
+    }
+}
+
+pub async fn llen(
+    mut rcm: State<ConnectionManager>,
+    ref key: &str,
+) -> Result<i64, (StatusCode, String)> {
+    match rcm.llen(&key).await {
+        Ok(v) => Ok(v),
+        Err(e) => {
+            error!("llen: {:?}", e);
+
+            return Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                json!({
+                    "success": false,
+                    "message": DB_ERROR_MSG
+                })
+                .to_string(),
+            ));
+        }
+    }
+}
