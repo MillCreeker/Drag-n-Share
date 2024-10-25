@@ -6,7 +6,7 @@ export function trnsRegister(socket) {
     socket.send(JSON.stringify({
         jwt: jwtCookie.value,
         command: 'register',
-        data: {}
+        data: JSON.stringify({})
     }));
 }
 
@@ -17,25 +17,25 @@ export async function trnsRequestFile(socket, filename) {
     const publicKey = keyPair.publicKey;
     const privateKey = keyPair.privateKey;
 
-    publicKeyCookie = useCookie(`${filename}-publicKey`);
-    privateKeyCookie = useCookie(`${filename}-privateKey`);
+    const publicKeyCookie = useCookie(`${filename}-publicKey`);
+    const privateKeyCookie = useCookie(`${filename}-privateKey`);
 
     publicKeyCookie.value = publicKey;
     privateKeyCookie.value = privateKey;
 
     const base64Key = await convertKeyToBase64(publicKey);
-
+    console.log(base64Key);
     socket.send(JSON.stringify({
         jwt: jwtCookie.value,
         command: 'request-file',
-        data: {
+        data: JSON.stringify({
             public_key: base64Key,
             filename: filename
-        }
+        })
     }));
 }
 
-export async function trnsHandleWsMessage(socket, message) {
+export async function trnsWsHandleMessage(socket, message) {
     console.log('Received:', message);
     const requestId = message.request_id;
     const data = message.data;
@@ -149,7 +149,7 @@ async function trnsHandleAddChunk(socket, requestId, data) {
 
     const fileCookie = userCookie(`${requestId}-file`);
     let file = fileCookie.value;
-    file = [file.slice(0,chunkNr*1024), chunk, file.slice(chunkNr*1024)].join('')
+    file = [file.slice(0, chunkNr * 1024), chunk, file.slice(chunkNr * 1024)].join('')
     fileCookie.value = file;
 
     if (isLastChunk) {
@@ -168,12 +168,12 @@ async function trnsAcknwoledgeFileRequest(socket, publicKey, amountOfChunks, fil
     socket.send(JSON.stringify({
         jwt: jwtCookie.value,
         command: 'acknowledge-file-request',
-        data: {
+        data: JSON.stringify({
             public_key: publicKey,
             amount_of_chunks: amountOfChunks,
             filename: filename,
             user_id: userId
-        }
+        })
     }));
 }
 
@@ -183,9 +183,9 @@ async function trnsReadyForFileTransfer(socket, requestId) {
     socket.send(JSON.stringify({
         jwt: jwtCookie.value,
         command: 'ready-for-file-transfer',
-        data: {
+        data: JSON.stringify({
             request_id: requestId
-        }
+        })
     }));
 }
 
@@ -195,12 +195,12 @@ async function trnsAddChunk(socket, requestId, isLastChunk, chunkNr, encryptedCh
     socket.send(JSON.stringify({
         jwt: jwtCookie.value,
         command: 'add-chunk',
-        data: {
+        data: JSON.stringify({
             request_id: requestId,
             is_last_chunk: isLastChunk,
             chunk_nr: chunkNr,
             chunk: encryptedChunk,
             iv: iv
-        }
+        })
     }));
 }

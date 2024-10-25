@@ -58,17 +58,37 @@ export async function deriveSharedSecret(privateKey, publicKey) {
     return sharedSecret;
 }
 
+function arrayBufferToBase64(arrayBuffer) {
+    let binary = '';
+    const bytes = new Uint8Array(arrayBuffer);
+    const len = bytes.byteLength;
+    for (let i = 0; i < len; i++) {
+        binary += String.fromCharCode(bytes[i]);
+    }
+    return btoa(binary);
+}
+
+function base64ToArrayBuffer(base64) {
+    const binary = atob(base64);
+    const len = binary.length;
+    const bytes = new Uint8Array(len);
+    for (let i = 0; i < len; i++) {
+        bytes[i] = binary.charCodeAt(i);
+    }
+    return bytes.buffer;
+}
+
 export async function convertKeyToBase64(key) {
-    const rawKey = await subtle.exportKey('raw', key);
-    const base64Key = Buffer.from(rawKey).toString('base64');
+    const rawKey = await crypto.subtle.exportKey('raw', key);
+    const base64Key = arrayBufferToBase64(rawKey);
 
     return base64Key;
 }
 
 export async function importKeyFromBase64(base64Key) {
-    const rawKey = Buffer.from(base64Key, 'base64');
+    const rawKey = base64ToArrayBuffer(base64Key);
 
-    const key = await subtle.importKey(
+    const key = await crypto.subtle.importKey(
         'raw',
         rawKey,
         {

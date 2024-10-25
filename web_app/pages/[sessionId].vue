@@ -59,7 +59,7 @@
 
 <script setup>
 import { getFiles } from '~/public/utils/api';
-import { trnsRegister, trnsRequestFile, trnsHandleWsMessage } from '~/public/utils/utils';
+import { trnsRegister, trnsRequestFile, trnsWsHandleMessage } from '~/public/utils/transmittor';
 import DropArea from '../components/DropArea.vue';
 import UploadButton from '../components/UploadButton.vue';
 const config = useRuntimeConfig();
@@ -144,9 +144,9 @@ const connectToWebSocket = async () => {
         trnsRegister(socket);
     };
 
-    socket.onmessage = (event) => {
+    socket.onmessage = async (event) => {
         const message = JSON.parse(event.data);
-        await trnsHandleWsMessage(socket, message);
+        await trnsWsHandleMessage(socket, message);
     };
 
     socket.onclose = () => {

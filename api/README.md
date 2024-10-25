@@ -262,6 +262,7 @@ The `data` parameter is an object that depends on the `command`.
 ### Request
 
 Requires a valid JWT of a user who joined the session.
+The `data` attribute has to be stringified.
 
 #### Body
 
@@ -269,7 +270,7 @@ Requires a valid JWT of a user who joined the session.
 {
     "jwt": String,
     "command": String,
-    "data": Object,
+    "data": String,
 }
 ```
 

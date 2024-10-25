@@ -109,114 +109,136 @@ async fn ws_handler_inner(
     let mut listener_spawned = false;
 
     // listen for incoming messages and process them
-    while let Some(Ok(message)) = ws.lock().await.next().await {
-        if let Message::Text(text) = message {
-            info!("Received message: {}", text);
-            // try to deserialize the incoming message
-            match serde_json::from_str::<Request>(&text) {
-                Ok(request) => {
-                    let user_id: Option<String> = match utils::decode_jwt(&request.jwt) {
-                        Ok(claims) => {
-                            if claims.aud != session_id {
-                                error!("Invalid session ID");
+    loop {
+        // lock only for receiving the message, then release
+        let message = {
+            let mut ws_lock = ws.lock().await;
+            ws_lock.next().await
+        };
+
+        // exit the loop if the WebSocket is closed
+        if let Some(Ok(message)) = message {
+            let msg_text = if let Message::Text(text) = message {
+                Some(text)
+            } else {
+                None
+            };
+
+            if let Some(text) = msg_text {
+                info!("Received message: {}", text);
+
+                // Try to deserialize the incoming message
+                match serde_json::from_str::<Request>(&text) {
+                    Ok(request) => {
+                        let user_id: Option<String> = match utils::decode_jwt(&request.jwt) {
+                            Ok(claims) => {
+                                if claims.aud != session_id {
+                                    error!("Invalid session ID");
+                                    None
+                                } else {
+                                    Some(claims.sub)
+                                }
+                            }
+                            Err(_) => {
+                                error!("Failed to decode JWT: {}", request.jwt);
                                 None
-                            } else {
-                                Some(claims.sub)
                             }
+                        };
+
+                        //////////////////////////////////////////////////
+                        // handle commands
+                        let response = if user_id.is_none() {
+                            Ok(Response {
+                                success: false,
+                                response: "No user ID".to_string(),
+                            })
+                        } else if request.command == "register" && listener_spawned {
+                            Ok(Response {
+                                success: false,
+                                response: "Already registered.".to_string(),
+                            })
+                        } else if request.command == "register" && !listener_spawned {
+                            let _listener = tokio::spawn(redis_listener(
+                                ws.clone(),
+                                rcm.clone(),
+                                shutdown_rx.clone(),
+                                session_id.clone(),
+                                user_id.unwrap_or("".to_string().clone()),
+                            ));
+
+                            listener_spawned = true;
+
+                            Ok(Response {
+                                success: true,
+                                response: "Registered".to_string(),
+                            })
+                        } else if request.command == "request-file" {
+                            request_file(
+                                rcm.clone(),
+                                &session_id,
+                                &user_id.unwrap_or("".to_string()),
+                                &request.data,
+                            )
+                            .await
+                        } else if request.command == "acknowledge-file-request" {
+                            acknowledge_file_request(
+                                rcm.clone(),
+                                &session_id,
+                                &user_id.unwrap_or("".to_string()),
+                                &request.data,
+                            )
+                            .await
+                        } else if request.command == "ready-for-file-transfer" {
+                            ready_for_file_transfer(
+                                rcm.clone(),
+                                &user_id.unwrap_or("".to_string()),
+                                &request.data,
+                            )
+                            .await
+                        } else if request.command == "add-chunk" {
+                            add_chunk(
+                                rcm.clone(),
+                                &user_id.unwrap_or("".to_string()),
+                                &request.data,
+                            )
+                            .await
+                        } else {
+                            Ok(Response {
+                                success: false,
+                                response: format!("Unknown command: {}", request.command),
+                            })
                         }
-                        Err(_) => {
-                            error!("Failed to decode JWT: {}", request.jwt);
-                            None
-                        }
-                    };
-
-                    //////////////////////////////////////////////////
-                    // handle commands \\
-                    let response = if user_id.is_none() {
-                        Ok(Response {
+                        .unwrap_or(Response {
                             success: false,
-                            response: "No user ID".to_string(),
-                        })
-                    } else if request.command == "register" && listener_spawned {
-                        Ok(Response {
-                            success: false,
-                            response: "Already registered.".to_string(),
-                        })
-                    } else if request.command == "register" && !listener_spawned {
-                        let _listener = tokio::spawn(redis_listener(
-                            ws.clone(),
-                            rcm.clone(),
-                            shutdown_rx.clone(),
-                            session_id.clone(),
-                            user_id.unwrap_or("".to_string().clone()),
-                        ));
+                            response: "Error".to_string(),
+                        });
+                        //////////////////////////////////////////////////
 
-                        listener_spawned = true;
-
-                        Ok(Response {
-                            success: true,
-                            response: "Registered".to_string(),
-                        })
-                    } else if request.command == "request-file" {
-                        request_file(
-                            rcm.clone(),
-                            &session_id,
-                            &user_id.unwrap_or("".to_string()),
-                            &request.data,
-                        )
-                        .await
-                    } else if request.command == "acknowledge-file-request" {
-                        acknowledge_file_request(
-                            rcm.clone(),
-                            &session_id,
-                            &user_id.unwrap_or("".to_string()),
-                            &request.data,
-                        )
-                        .await
-                    } else if request.command == "ready-for-file-transfer" {
-                        ready_for_file_transfer(
-                            rcm.clone(),
-                            &user_id.unwrap_or("".to_string()),
-                            &request.data,
-                        )
-                        .await
-                    } else if request.command == "add-chunk" {
-                        add_chunk(
-                            rcm.clone(),
-                            &user_id.unwrap_or("".to_string()),
-                            &request.data,
-                        )
-                        .await
-                    } else {
-                        Ok(Response {
-                            success: false,
-                            response: format!("Unknown command: {}", request.command),
-                        })
-                    }
-                    .unwrap_or(Response {
-                        success: false,
-                        response: "Error".to_string(),
-                    });
-                    //////////////////////////////////////////////////
-
-                    // serialize the response to JSON
-                    match serde_json::to_string(&response) {
-                        Ok(json) => {
-                            // Send the response back as a text message
-                            if let Err(e) = ws.lock().await.send(Message::Text(json)).await {
-                                error!("Failed to send message: {}", e);
-                                return;
+                        // serialize the response to JSON
+                        match serde_json::to_string(&response) {
+                            Ok(json) => {
+                                // lock the WebSocket only when sending the message
+                                let mut ws_lock = ws.lock().await;
+                                if let Err(e) = ws_lock.send(Message::Text(json)).await {
+                                    error!("Failed to send message: {}", e);
+                                    return;
+                                }
                             }
+                            Err(e) => error!("Failed to serialize outgoing message: {}", e),
                         }
-                        Err(e) => error!("Failed to serialize outgoing message: {}", e),
+
+                        info!("Sent response: {}", response.response);
                     }
+                    Err(e) => error!("Failed to deserialize incoming message: {}", e),
                 }
-                Err(e) => error!("Failed to deserialize incoming message: {}", e),
             }
+        } else {
+            // webSocket connection has been closed, exit the loop
+            break;
         }
     }
 
-    // WebSocket connection has been closed, notify listeners to shut down
+    // notify listeners to shut down
     let _ = shutdown_tx.send(());
     info!("WebSocket closed, sent shutdown signal to listeners.");
 }
@@ -273,8 +295,6 @@ async fn redis_listener(
     loop {
         tokio::select! {
             _ = interval.tick() => {
-                info!("Tick");
-
                 // acknowledge-file-request \\
                 match msg_acknowledge_file_request(ws.clone(), rcm.clone(), &session_id, &user_id).await {
                     Ok(_) => (),
@@ -313,6 +333,7 @@ async fn redis_listener(
             }
 
             _ = shutdown_signal.changed() => {
+                info!("Listener shutdown signal received.");
                 break;
             }
         }
@@ -333,6 +354,7 @@ async fn request_file(
     user_id: &String,
     data: &String,
 ) -> Result<Response, String> {
+    info!("Requesting file");
     let data = utils::deserialize_data::<ReqRequestFile>(&data)?;
 
     let key = format!("files:{}", &session_id);
@@ -787,7 +809,7 @@ async fn clean_up_request_data(rcm: State<ConnectionManager>, request_id: &Strin
         Err(_) => {
             was_successful = false;
             return was_successful;
-        },
+        }
     };
 
     match utils::redis_handler::del(rcm.clone(), &key).await {
