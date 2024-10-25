@@ -338,6 +338,27 @@ pub async fn lpush(
     }
 }
 
+pub async fn lpop(
+    mut rcm: State<ConnectionManager>,
+    ref key: &str,
+) -> Result<String, (StatusCode, String)> {
+    match rcm.lpop(&key, None).await {
+        Ok(v) => Ok(v),
+        Err(e) => {
+            error!("lpop: {:?}", e);
+
+            return Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                json!({
+                    "success": false,
+                    "message": DB_ERROR_MSG
+                })
+                .to_string(),
+            ));
+        }
+    }
+}
+
 pub async fn rpop(
     mut rcm: State<ConnectionManager>,
     ref key: &str,

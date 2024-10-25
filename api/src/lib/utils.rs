@@ -411,3 +411,16 @@ pub async fn get_user_files(
 
     Ok(user_files)
 }
+
+pub async fn is_request_ready(rcm: State<ConnectionManager>, request_id: &String) -> bool {
+    let key = format!("file.req.ready:{}", &request_id);
+    let is_ready = match redis_handler::exists(rcm.clone(), &key).await {
+        Ok(exists) => exists,
+        Err(_) => {
+            error!("Failed to check if file request is ready: {}", &request_id);
+            false
+        }
+    };
+
+    is_ready
+}

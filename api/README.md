@@ -277,7 +277,7 @@ Requires a valid JWT of a user who joined the session.
 
 ```JSON
 {
-    "success": bool,
+    "success": Boolean,
     "response": String,
 }
 ```
@@ -323,6 +323,7 @@ Requires a valid JWT of a user who joined the session.
 ```JSON
 "data": {
     "request_id": String,
+    "is_last_chunk": Boolean,
     "chunk_nr": Number,
     "chunk": String,
     "iv": String
@@ -375,6 +376,9 @@ Messages send from the websocket indipendently.
 
 ```JSON
 "data": {
-    "chunk_nr": Number
+    "is_last_chunk": Boolean,
+    "chunk_nr": Number,
+    "chunk": String,
+    "iv": String
 }
 ```

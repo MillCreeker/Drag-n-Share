@@ -115,9 +115,17 @@ Will be validated using JWT.
 
 `<user.id>`
 
-## SET file.reqs:\<user.id\>
+## SET file.reqs.sender:\<user.id\>
 
-List of files requested a user is involved in.
+List of file requestes a user is a sender in.
+
+### Data Structure
+
+`<request.id>`
+
+## SET file.reqs.receiver:\<user.id\>
+
+List of file requestes a user is a receiver in.
 
 ### Data Structure
 
@@ -131,6 +139,7 @@ Data for preparing file request.
 
 ```JSON
 {
+    "filename": String,
     "public.key": String,
     "amount.of.chunks": Number
 }
