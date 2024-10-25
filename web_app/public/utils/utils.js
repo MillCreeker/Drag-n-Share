@@ -58,6 +58,30 @@ export async function deriveSharedSecret(privateKey, publicKey) {
     return sharedSecret;
 }
 
+export async function convertKeyToBase64(key) {
+    const rawKey = await subtle.exportKey('raw', key);
+    const base64Key = Buffer.from(rawKey).toString('base64');
+
+    return base64Key;
+}
+
+export async function importKeyFromBase64(base64Key) {
+    const rawKey = Buffer.from(base64Key, 'base64');
+
+    const key = await subtle.importKey(
+        'raw',
+        rawKey,
+        {
+            name: "ECDH",
+            namedCurve: "P-256",
+        },
+        true, // extractable
+        [] 
+    );
+
+    return key;
+}
+
 export async function generateIv() {
     const iv = new Uint8Array(12);
     crypto.getRandomValues(iv);
@@ -92,3 +116,13 @@ export async function decryptData(sharedSecret, iv, encryptedData) {
 
     return new TextDecoder().decode(decryptedData);
 }
+
+export function downloadDataUrl(dataUrl, filename) {
+    const link = document.createElement("a");
+    link.download = filename;
+    link.href = dataUrl;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    // delete link;
+};

@@ -351,7 +351,8 @@ Messages send from the websocket indipendently.
 ```JSON
 "data": {
     "public_key": String,
-    "filename": String
+    "filename": String,
+    "user_id": String
 }
 ```
 
@@ -360,6 +361,7 @@ Messages send from the websocket indipendently.
 ```JSON
 "data": {
     "public_key": String,
+    "filename": String,
     "amount_of_chunks": Number
 }
 ```

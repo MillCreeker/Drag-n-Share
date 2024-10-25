@@ -34,6 +34,7 @@ use std::net::SocketAddr;
 use env_logger::Env;
 use log::{error, info};
 
+const MAX_CHUNK_SIZE: usize = 1024;
 const MAX_QUEUE_SIZE: i64 = 16;
 
 #[tokio::main]
@@ -233,12 +234,14 @@ struct WsMessage<T: WsMsgData> {
 struct WsMsgAcknowledgeFileRequest {
     public_key: String,
     filename: String,
+    user_id: String,
 }
 impl WsMsgData for WsMsgAcknowledgeFileRequest {}
 
 #[derive(Serialize)]
 struct WsMsgPrepareForFileTransfer {
     public_key: String,
+    filename: String,
     amount_of_chunks: u32,
 }
 impl WsMsgData for WsMsgPrepareForFileTransfer {}
@@ -462,6 +465,10 @@ async fn add_chunk(
 
     utils::check_user_is_in_file_request(rcm.clone(), &data.request_id, user_id).await?;
 
+    if data.chunk.len() > MAX_CHUNK_SIZE {
+        return Err("Chunk is too large".to_string());
+    }
+
     let key = format!("file.req.chunks:{}", &data.request_id);
     let queue_size =
         utils::handle_redis_error(utils::redis_handler::llen(rcm.clone(), &key).await)?;
@@ -514,20 +521,20 @@ async fn msg_acknowledge_file_request(
         }
 
         let key = format!("file.reqs:{}:{}", &session_id, &file);
-        let users = match utils::redis_handler::smembers(rcm.clone(), &key).await {
-            Ok(users) => users,
+        let user_ids = match utils::redis_handler::smembers(rcm.clone(), &key).await {
+            Ok(user_ids) => user_ids,
             Err(_) => continue,
         };
 
-        for user in users {
-            let key = format!("file.req:{}:{}:{}", &session_id, &file, &user);
+        for user_id in user_ids {
+            let key = format!("file.req:{}:{}:{}", &session_id, &file, &user_id);
             let public_key = match utils::redis_handler::get(rcm.clone(), &key).await {
                 Ok(public_key) => public_key,
                 Err(_) => continue,
             };
 
             // TODO del file.reqs:session.id:filename
-            match utils::redis_handler::srem(rcm.clone(), &key, &user).await {
+            match utils::redis_handler::srem(rcm.clone(), &key, &user_id).await {
                 Ok(_) => (),
                 Err(_) => {
                     error!("Failed to delete file.reqs:session.id:filename");
@@ -548,6 +555,7 @@ async fn msg_acknowledge_file_request(
                 data: WsMsgAcknowledgeFileRequest {
                     public_key: public_key.clone(),
                     filename: file.clone(),
+                    user_id: user_id.clone(),
                 },
             };
 
@@ -614,6 +622,7 @@ async fn msg_prepare_for_file_request(
             command: "prepare-for-file-transfer".to_string(),
             data: WsMsgPrepareForFileTransfer {
                 public_key: req_data[2].clone(),
+                filename: filename.clone(),
                 amount_of_chunks: req_data[0].parse().unwrap_or(0),
             },
         };
@@ -643,6 +652,18 @@ async fn msg_send_next_chunk(
         }
 
         let key = format!("file.req.chunks:{}", &request_id);
+
+        let queue_size = match utils::redis_handler::llen(rcm.clone(), &key).await {
+            Ok(size) => size,
+            Err(_) => {
+                error!("Failed to get queue size for request ID: {}", &request_id);
+                continue;
+            }
+        };
+        if queue_size >= MAX_QUEUE_SIZE {
+            continue;
+        }
+
         let chunk = match utils::redis_handler::lpop(rcm.clone(), &key).await {
             Ok(chunk) => chunk,
             Err(_) => {

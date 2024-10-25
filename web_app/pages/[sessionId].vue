@@ -59,6 +59,7 @@
 
 <script setup>
 import { getFiles } from '~/public/utils/api';
+import { trnsRegister, trnsRequestFile, trnsHandleWsMessage } from '~/public/utils/utils';
 import DropArea from '../components/DropArea.vue';
 import UploadButton from '../components/UploadButton.vue';
 const config = useRuntimeConfig();
@@ -140,11 +141,12 @@ const connectToWebSocket = async () => {
 
     socket.onopen = () => {
         console.log('Connected to WebSocket');
+        trnsRegister(socket);
     };
 
     socket.onmessage = (event) => {
-        const data = JSON.parse(event.data);
-        console.log('Received:', data);
+        const message = JSON.parse(event.data);
+        await trnsHandleWsMessage(socket, message);
     };
 
     socket.onclose = () => {
@@ -215,11 +217,7 @@ const deleteSession = async () => {
 };
 
 const downloadFile = async (filename) => {
-    socket.send(JSON.stringify({
-        jwt: jwtCookie.value,
-        command: 'request-file',
-        data: filename
-    }));
+    await trnsRequestFile(socket, filename);
 }
 
 onMounted(async () => {

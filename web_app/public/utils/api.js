@@ -1,5 +1,4 @@
 import { nextTick } from "vue";
-import { generateKeyPair, deriveSharedSecret, encryptData, decryptData } from '~/public/utils/utils';
 
 export function createSession(files) {
     const config = useRuntimeConfig();
