@@ -102,6 +102,57 @@ export async function importKeyFromBase64(base64Key) {
     return key;
 }
 
+export async function exportPrivateKeyToBase64(privateKey) {
+    const rawKey = await crypto.subtle.exportKey('pkcs8', privateKey);
+    const base64Key = arrayBufferToBase64(rawKey);
+    return base64Key;
+}
+
+export async function importPrivateKeyFromBase64(base64Key) {
+    const rawKey = base64ToArrayBuffer(base64Key);
+    const privateKey = await crypto.subtle.importKey(
+        'pkcs8',
+        rawKey,
+        {
+            name: "ECDH",
+            namedCurve: "P-256",
+        },
+        true, // extractable
+        ["deriveKey", "deriveBits"]
+    );
+    return privateKey;
+}
+
+export async function exportSharedSecretToBase64(sharedSecret) {
+    const rawKey = await crypto.subtle.exportKey('raw', sharedSecret);
+    const base64Key = arrayBufferToBase64(rawKey);
+    return base64Key;
+}
+
+export async function importSharedSecretFromBase64(base64Key) {
+    const rawKey = base64ToArrayBuffer(base64Key);
+    const sharedSecret = await crypto.subtle.importKey(
+        'raw',
+        rawKey,
+        {
+            name: "AES-GCM",
+            length: 256,
+        },
+        true, // extractable
+        ["encrypt", "decrypt"]
+    );
+    return sharedSecret;
+}
+
+export function ivToBase64(iv) {
+    return arrayBufferToBase64(iv.buffer);
+}
+
+export function base64ToIv(base64) {
+    const arrayBuffer = base64ToArrayBuffer(base64);
+    return new Uint8Array(arrayBuffer);
+}
+
 export async function generateIv() {
     const iv = new Uint8Array(12);
     crypto.getRandomValues(iv);

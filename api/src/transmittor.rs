@@ -112,6 +112,7 @@ async fn ws_handler_inner(
     loop {
         // lock only for receiving the message, then release
         let message = {
+            info!("LOCK ws_handler_inner");
             let mut ws_lock = ws.lock().await;
             ws_lock.next().await
         };
@@ -214,20 +215,24 @@ async fn ws_handler_inner(
                         });
                         //////////////////////////////////////////////////
 
-                        // serialize the response to JSON
-                        match serde_json::to_string(&response) {
-                            Ok(json) => {
-                                // lock the WebSocket only when sending the message
-                                let mut ws_lock = ws.lock().await;
-                                if let Err(e) = ws_lock.send(Message::Text(json)).await {
-                                    error!("Failed to send message: {}", e);
-                                    return;
-                                }
-                            }
-                            Err(e) => error!("Failed to serialize outgoing message: {}", e),
-                        }
+                        info!("Response: {:?}", response.response);
 
-                        info!("Sent response: {}", response.response);
+                        // serialize the response to JSON
+                        // match serde_json::to_string(&response) {
+                        //     Ok(json) => {
+                        //         // lock the WebSocket only when sending the message
+                        //         let mut ws_lock = ws.lock().await;
+                        // if let Err(e) = {
+                        //     let mut ws_lock = ws.lock().await;
+                        //     ws_lock.send(Message::Text(message_str)).await
+                        // } {
+                        //     error!("Failed to send message: {}", e);
+                        // }
+                        // }
+                        // Err(e) => error!("Failed to serialize outgoing message: {}", e),
+                        // }
+
+                        // info!("Sent response: {}", response.response);
                     }
                     Err(e) => error!("Failed to deserialize incoming message: {}", e),
                 }
@@ -555,14 +560,6 @@ async fn msg_acknowledge_file_request(
                 Err(_) => continue,
             };
 
-            // TODO del file.reqs:session.id:filename
-            match utils::redis_handler::srem(rcm.clone(), &key, &user_id).await {
-                Ok(_) => (),
-                Err(_) => {
-                    error!("Failed to delete file.reqs:session.id:filename");
-                }
-            }
-
             // TODO del file.reqs:session.id:filename:user.id
             match utils::redis_handler::del(rcm.clone(), &key).await {
                 Ok(_) => (),
@@ -570,6 +567,15 @@ async fn msg_acknowledge_file_request(
                     error!("Failed to delete file.req:session.id:filename:user.id");
                 }
             };
+
+            // TODO srem file.reqs:session.id:filename
+            let key = format!("file.reqs:{}:{}", &session_id, &file);
+            match utils::redis_handler::srem(rcm.clone(), &key, &user_id).await {
+                Ok(_) => (),
+                Err(_) => {
+                    error!("Failed to delete file.reqs:session.id:filename");
+                }
+            }
 
             let message = WsMessage {
                 request_id: "".to_string(),
@@ -581,10 +587,17 @@ async fn msg_acknowledge_file_request(
                 },
             };
 
+            info!("Sending message");
+
             let message_str = serde_json::to_string(&message).unwrap();
-            if let Err(e) = ws.lock().await.send(Message::Text(message_str)).await {
+            if let Err(e) = {
+                info!("LOCK msg_acknowledge_file_request");
+                let mut ws_lock = ws.lock().await;
+                ws_lock.send(Message::Text(message_str)).await
+            } {
                 error!("Failed to send message: {}", e);
             }
+            info!("Sending message done");
         }
     }
 
@@ -650,7 +663,11 @@ async fn msg_prepare_for_file_request(
         };
 
         let message_str = serde_json::to_string(&message).unwrap();
-        if let Err(e) = ws.lock().await.send(Message::Text(message_str)).await {
+        if let Err(e) = {
+            info!("LOCK msg_prepare_for_file_request");
+            let mut ws_lock = ws.lock().await;
+            ws_lock.send(Message::Text(message_str)).await
+        } {
             error!("Failed to send message: {}", e);
         }
     }
@@ -696,10 +713,13 @@ async fn msg_send_next_chunk(
                 };
 
                 let message_str = serde_json::to_string(&message).unwrap();
-                if let Err(e) = ws.lock().await.send(Message::Text(message_str)).await {
+                if let Err(e) = {
+                    info!("LOCK msg_send_next_chunk");
+                    let mut ws_lock = ws.lock().await;
+                    ws_lock.send(Message::Text(message_str)).await
+                } {
                     error!("Failed to send message: {}", e);
                 }
-
                 continue;
             }
         };
@@ -728,7 +748,11 @@ async fn msg_send_next_chunk(
         };
 
         let message_str = serde_json::to_string(&message).unwrap();
-        if let Err(e) = ws.lock().await.send(Message::Text(message_str)).await {
+        if let Err(e) = {
+            info!("LOCK msg_send_next_chunk");
+            let mut ws_lock = ws.lock().await;
+            ws_lock.send(Message::Text(message_str)).await
+        } {
             error!("Failed to send message: {}", e);
         }
     }
@@ -775,7 +799,11 @@ async fn msg_add_chunk(
             clean_up_request_data(rcm.clone(), &request_id).await;
 
             let message_str = serde_json::to_string(&message).unwrap();
-            if let Err(e) = ws.lock().await.send(Message::Text(message_str)).await {
+            if let Err(e) = {
+                info!("LOCK msg_add_chunk 1");
+                let mut ws_lock = ws.lock().await;
+                ws_lock.send(Message::Text(message_str)).await
+            } {
                 error!("Failed to send message: {}", e);
             }
         } else {
@@ -790,7 +818,11 @@ async fn msg_add_chunk(
             };
 
             let message_str = serde_json::to_string(&message).unwrap();
-            if let Err(e) = ws.lock().await.send(Message::Text(message_str)).await {
+            if let Err(e) = {
+                info!("LOCK msg_add_chunk 2");
+                let mut ws_lock = ws.lock().await;
+                ws_lock.send(Message::Text(message_str)).await
+            } {
                 error!("Failed to send message: {}", e);
             }
         }
