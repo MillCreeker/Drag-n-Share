@@ -1,4 +1,5 @@
 import { nextTick } from "vue";
+import { storeFile } from "./utils";
 
 export function createSession(files) {
     const config = useRuntimeConfig();
@@ -68,8 +69,7 @@ export async function uploadFiles(files, sessionId) {
 
         for (let i = 0; i < files.length; i++) {
             const file = files[i];
-            const fileCookie = useCookie(`file-${file.name}`);
-            fileCookie.value = file.data;
+            await storeFile(file.name, file.data);
         }
     } catch (error) {
         console.error(error);

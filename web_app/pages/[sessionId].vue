@@ -75,6 +75,7 @@ let files = ref([]);
 const jwtCookie = useCookie('jwt');
 
 let socket;
+let closeSocket = false;
 
 const loadData = async () => {
     if (jwtCookie.value) {
@@ -138,19 +139,22 @@ const loadData = async () => {
 
 const connectToWebSocket = async () => {
     socket = new WebSocket(`${config.public.wsUri}/session/${sessionId.value}`);
-
+    
     socket.onopen = () => {
         console.log('Connected to WebSocket');
         trnsRegister(socket);
     };
 
     socket.onmessage = async (event) => {
+        console.log('Received:', event);
         const message = JSON.parse(event.data);
         await trnsWsHandleMessage(socket, message);
     };
 
     socket.onclose = () => {
         console.log('Disconnected from WebSocket');
+
+        if (closeSocket) return;
         setTimeout(connectToWebSocket, 100);
     };
 
@@ -208,6 +212,9 @@ const deleteSession = async () => {
 
         if (results.success) {
             jwtCookie.value = '';
+            closeSocket = true;
+            socket.close();
+
             navigateTo('/');
         }
 

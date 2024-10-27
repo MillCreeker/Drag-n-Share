@@ -96,7 +96,7 @@ export async function importKeyFromBase64(base64Key) {
             namedCurve: "P-256",
         },
         true, // extractable
-        [] 
+        []
     );
 
     return key;
@@ -155,7 +155,7 @@ export function base64ToIv(base64) {
 
 export async function generateIv() {
     const iv = new Uint8Array(12);
-    crypto.getRandomValues(iv);
+    getRandomValues(iv);
 
     return iv;
 }
@@ -197,3 +197,70 @@ export function downloadDataUrl(dataUrl, filename) {
     document.body.removeChild(link);
     // delete link;
 };
+
+function openDatabase() {
+    return new Promise((resolve, reject) => {
+        const request = window.indexedDB.open('fileStorage', 1);
+
+        request.onerror = (event) => {
+            reject(event.target.error);
+        };
+
+        request.onsuccess = (event) => {
+            resolve(event.target.result);
+        };
+
+        request.onupgradeneeded = (event) => {
+            const db = event.target.result;
+            db.createObjectStore('files', { keyPath: 'id' });
+        };
+    });
+}
+
+export async function storeFile(id, base64File) {
+    const db = await openDatabase(); const transaction = db.transaction(['files'], 'readwrite'); const store = transaction.objectStore('files');
+
+    // const fileBlob = new Blob([Uint8Array.from(atob(base64File), c => c.charCodeAt(0))]);
+    const fileBlob = new Blob([Uint8Array.from(base64File, c => c.charCodeAt(0))]);
+    const request = store.put({ id, fileBlob });
+
+    request.onsuccess = () => {
+        console.log(`File ${id} stored successfully!`);
+    };
+
+    request.onerror = (event) => {
+        console.error(`Failed to store file ${id}: `, event.target.error);
+    };
+}
+
+export async function getFile(id) {
+    const db = await openDatabase();
+    const transaction = db.transaction(['files'], 'readonly');
+    const store = transaction.objectStore('files');
+
+    return new Promise((resolve, reject) => {
+        const request = store.get(id);
+
+        request.onsuccess = () => {
+            if (request.result) {
+                const fileBlob = request.result.fileBlob;
+                // Convert the Blob back to a Base64 string
+                const reader = new FileReader();
+                reader.onloadend = () => {
+                    // const base64String = reader.result.split(',')[1]; // remove data URL prefix
+                    resolve(reader.result);
+                };
+                reader.onerror = () => {
+                    reject('Failed to convert Blob to Base64');
+                };
+                reader.readAsDataURL(fileBlob);
+            } else {
+                reject(`File with ID ${id} not found`);
+            }
+        };
+
+        request.onerror = (event) => {
+            reject(`Failed to retrieve file ${id}: ${event.target.error}`);
+        };
+    });
+}

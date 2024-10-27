@@ -1,4 +1,5 @@
-import { generateKeyPair, deriveSharedSecret, convertKeyToBase64, importKeyFromBase64, exportPrivateKeyToBase64, importPrivateKeyFromBase64, exportSharedSecretToBase64, importSharedSecretFromBase64, ivToBase64, base64ToIv, encryptData, decryptData, downloadDataUrl } from '~/public/utils/utils';
+import { nextTick } from "vue";
+import { generateKeyPair, deriveSharedSecret, convertKeyToBase64, importKeyFromBase64, exportPrivateKeyToBase64, importPrivateKeyFromBase64, exportSharedSecretToBase64, importSharedSecretFromBase64, ivToBase64, base64ToIv, encryptData, decryptData, downloadDataUrl, getFile } from '~/public/utils/utils';
 
 export function trnsRegister(socket) {
     console.log('trnsRegister');
@@ -16,14 +17,12 @@ export async function trnsRequestFile(socket, filename) {
     const jwtCookie = useCookie('jwt');
 
     const keyPair = await generateKeyPair();
-    const publicKey = keyPair.publicKey;
-    const privateKey = keyPair.privateKey;
 
     const publicKeyCookie = useCookie(`${filename}-publicKey`);
     const privateKeyCookie = useCookie(`${filename}-privateKey`);
 
-    const base64PublicKey = await convertKeyToBase64(publicKey);
-    const base64PrivateKey = await exportPrivateKeyToBase64(privateKey);
+    const base64PublicKey = await convertKeyToBase64(keyPair.publicKey);
+    const base64PrivateKey = await exportPrivateKeyToBase64(keyPair.privateKey);
 
     publicKeyCookie.value = base64PublicKey;
     privateKeyCookie.value = base64PrivateKey;
@@ -69,25 +68,27 @@ async function trnsHandleAcknowledgeFileRequest(socket, requestId, data) {
     const filename = data.filename;
     const userId = data.user_id;
 
+    const requestIdCookie = useCookie(requestId);
+    requestIdCookie.value = filename;
+
     const keyPair = await generateKeyPair();
-    const publicKey = keyPair.publicKey;
-    const privateKey = keyPair.privateKey;
 
-    const secretObj = await deriveSharedSecret(clientPublicKey, privateKey);
+    const secretObj = await deriveSharedSecret(keyPair.privateKey, clientPublicKey);
 
-    publicKeyCookie = useCookie(`${requestId}-publicKey`);
-    privateKeyCookie = useCookie(`${requestId}-privateKey`);
-    secretCookie = useCookie(`${requestId}-secret`);
+    const publicKeyCookie = useCookie(`${requestId}-publicKey`);
+    const privateKeyCookie = useCookie(`${requestId}-privateKey`);
+    const secretCookie = useCookie(`${requestId}-secret`);
 
-    const base64PublicKey = await convertKeyToBase64(publicKey);
-    const base64PrivateKey = await exportPrivateKeyToBase64(privateKey);
+    const base64PublicKey = await convertKeyToBase64(keyPair.publicKey);
+    const base64PrivateKey = await exportPrivateKeyToBase64(keyPair.privateKey);
 
     publicKeyCookie.value = base64PublicKey;
     privateKeyCookie.value = base64PrivateKey;
     secretCookie.value = await exportSharedSecretToBase64(secretObj);
 
-    const fileCookie = userCookie(`file-${filename}`);
-    const file = fileCookie.value;
+    await nextTick(); // ensure cookie is assigned
+
+    const file = await getFile(filename);
     const amountOfChunks = Math.ceil(file.length / 1024)
 
     await trnsAcknwoledgeFileRequest(socket, base64PublicKey, amountOfChunks, filename, userId);
@@ -105,15 +106,15 @@ async function trnsHandlePrepareForFileTransfer(socket, requestId, data) {
     const newPublicKeyCookie = useCookie(`${requestId}-publicKey`);
     const newPrivateKeyCookie = useCookie(`${requestId}-privateKey`);
 
+    const privateKey = await importPrivateKeyFromBase64(privateKeyCookie.value);
+
     newPublicKeyCookie.value = publicKeyCookie.value;
     newPrivateKeyCookie.value = privateKeyCookie.value;
 
     publicKeyCookie.value = null;
     privateKeyCookie.value = null;
 
-    const privateKey = await importPrivateKeyFromBase64(privateKeyCookie.value);
-
-    const secretObj = await deriveSharedSecret(clientPublicKey, privateKey);
+    const secretObj = await deriveSharedSecret(privateKey, clientPublicKey);
     const secret = await exportSharedSecretToBase64(secretObj);
     const secretCookie = useCookie(`${requestId}-secret`);
     secretCookie.value = secret;
@@ -128,8 +129,10 @@ async function trnsHandleSendNextChunk(socket, requestId, data) {
     console.log('trnsHandleSendNextChunk');
     const lastChunkNr = data.last_chunk_nr;
 
-    const fileCookie = userCookie(`file-${filename}`);
-    const file = fileCookie.value;
+    const requestIdCookie = useCookie(requestId);
+
+    console.log(requestIdCookie.value);
+    const file = await getFile(requestIdCookie.value);
 
     const cutOff = lastChunkNr * 1024 + 1024;
     const chunk = file.slice(lastChunkNr * 1024, cutOff);
@@ -160,7 +163,7 @@ async function trnsHandleAddChunk(socket, requestId, data) {
 
     const chunk = await decryptData(secret, iv, encryptedChunk);
 
-    const fileCookie = userCookie(`${requestId}-file`);
+    const fileCookie = useCookie(`${requestId}-file`);
     let file = fileCookie.value;
     file = [file.slice(0, chunkNr * 1024), chunk, file.slice(chunkNr * 1024)].join('')
     fileCookie.value = file;

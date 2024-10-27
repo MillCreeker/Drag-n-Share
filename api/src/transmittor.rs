@@ -10,15 +10,18 @@ use axum::{
     Router,
 };
 
-use serde_json::error;
 use tokio::net::TcpListener;
-use utils::{handle_redis_error, redis_handler::sadd};
+use utils::handle_redis_error;
 
-use std::sync::Arc;
+use once_cell::sync::Lazy;
+use std::net::SocketAddr;
 use std::time::Duration;
-use tokio::sync::{watch, Mutex};
+use tokio::sync::{mpsc, watch};
 use tokio::time;
 use tokio_stream::StreamExt;
+
+use dashmap::DashMap;
+use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
@@ -27,15 +30,15 @@ use axum_client_ip::{SecureClientIp, SecureClientIpSource};
 use http::header::HeaderValue;
 use tower_http::cors::{AllowOrigin, Any, CorsLayer};
 
-use redis::{aio::ConnectionManager, AsyncCommands};
-
-use std::net::SocketAddr;
+use redis::aio::ConnectionManager;
 
 use env_logger::Env;
 use log::{error, info};
 
 const MAX_CHUNK_SIZE: usize = 1024;
 const MAX_QUEUE_SIZE: i64 = 16;
+
+static LISTENERS: Lazy<Arc<DashMap<String, ()>>> = Lazy::new(|| Arc::new(DashMap::new()));
 
 #[tokio::main]
 async fn main() {
@@ -100,152 +103,140 @@ async fn ws_handler_inner(
     rcm: State<ConnectionManager>,
     secure_ip: SecureClientIp,
     session_id: String,
-    ws: WebSocket,
+    mut socket: WebSocket,
 ) {
-    let ws = Arc::new(Mutex::new(ws));
-
-    // create a watch channel to signal shutdown
+    let (tx, mut rx) = mpsc::channel::<String>(1024);
     let (shutdown_tx, shutdown_rx) = watch::channel(());
-    let mut listener_spawned = false;
+    // Use tokio::select! to handle reading from the WebSocket and sending messages concurrently
 
-    // listen for incoming messages and process them
+    let tx_clone = tx.clone();
+    let shutdown_rx_clone = shutdown_rx.clone();
     loop {
-        // lock only for receiving the message, then release
-        let message = {
-            info!("LOCK ws_handler_inner");
-            let mut ws_lock = ws.lock().await;
-            ws_lock.next().await
-        };
+        tokio::select! {
+            // Handle receiving from the WebSocket
+            message = socket.next() => {
+                match message {
+                    Some(Ok(Message::Text(text))) => {
+                        info!("Received message from client: {}", text);
 
-        // exit the loop if the WebSocket is closed
-        if let Some(Ok(message)) = message {
-            let msg_text = if let Message::Text(text) = message {
-                Some(text)
-            } else {
-                None
-            };
-
-            if let Some(text) = msg_text {
-                info!("Received message: {}", text);
-
-                // Try to deserialize the incoming message
-                match serde_json::from_str::<Request>(&text) {
-                    Ok(request) => {
-                        let user_id: Option<String> = match utils::decode_jwt(&request.jwt) {
-                            Ok(claims) => {
-                                if claims.aud != session_id {
-                                    error!("Invalid session ID");
-                                    None
-                                } else {
-                                    Some(claims.sub)
-                                }
-                            }
-                            Err(_) => {
-                                error!("Failed to decode JWT: {}", request.jwt);
-                                None
-                            }
-                        };
-
-                        //////////////////////////////////////////////////
-                        // handle commands
-                        let response = if user_id.is_none() {
-                            Ok(Response {
-                                success: false,
-                                response: "No user ID".to_string(),
-                            })
-                        } else if request.command == "register" && listener_spawned {
-                            Ok(Response {
-                                success: false,
-                                response: "Already registered.".to_string(),
-                            })
-                        } else if request.command == "register" && !listener_spawned {
-                            let _listener = tokio::spawn(redis_listener(
-                                ws.clone(),
-                                rcm.clone(),
-                                shutdown_rx.clone(),
-                                session_id.clone(),
-                                user_id.unwrap_or("".to_string().clone()),
-                            ));
-
-                            listener_spawned = true;
-
-                            Ok(Response {
-                                success: true,
-                                response: "Registered".to_string(),
-                            })
-                        } else if request.command == "request-file" {
-                            request_file(
-                                rcm.clone(),
-                                &session_id,
-                                &user_id.unwrap_or("".to_string()),
-                                &request.data,
-                            )
-                            .await
-                        } else if request.command == "acknowledge-file-request" {
-                            acknowledge_file_request(
-                                rcm.clone(),
-                                &session_id,
-                                &user_id.unwrap_or("".to_string()),
-                                &request.data,
-                            )
-                            .await
-                        } else if request.command == "ready-for-file-transfer" {
-                            ready_for_file_transfer(
-                                rcm.clone(),
-                                &user_id.unwrap_or("".to_string()),
-                                &request.data,
-                            )
-                            .await
-                        } else if request.command == "add-chunk" {
-                            add_chunk(
-                                rcm.clone(),
-                                &user_id.unwrap_or("".to_string()),
-                                &request.data,
-                            )
-                            .await
-                        } else {
-                            Ok(Response {
-                                success: false,
-                                response: format!("Unknown command: {}", request.command),
-                            })
-                        }
-                        .unwrap_or(Response {
-                            success: false,
-                            response: "Error".to_string(),
-                        });
-                        //////////////////////////////////////////////////
-
-                        info!("Response: {:?}", response.response);
-
-                        // serialize the response to JSON
-                        // match serde_json::to_string(&response) {
-                        //     Ok(json) => {
-                        //         // lock the WebSocket only when sending the message
-                        //         let mut ws_lock = ws.lock().await;
-                        // if let Err(e) = {
-                        //     let mut ws_lock = ws.lock().await;
-                        //     ws_lock.send(Message::Text(message_str)).await
-                        // } {
-                        //     error!("Failed to send message: {}", e);
-                        // }
-                        // }
-                        // Err(e) => error!("Failed to serialize outgoing message: {}", e),
-                        // }
-
-                        // info!("Sent response: {}", response.response);
+                        handle_incomming_message(
+                            tx_clone.clone(),
+                            shutdown_rx_clone.clone(),
+                            rcm.clone(),
+                            &session_id,
+                            &text,
+                        ).await;
                     }
-                    Err(e) => error!("Failed to deserialize incoming message: {}", e),
+                    Some(Ok(_)) => {} // Handle other message types if needed
+                    Some(Err(e)) => {
+                        error!("Error reading from socket: {}", e);
+                        break;
+                    }
+                    None => {
+                        error!("Client disconnected");
+                        break;
+                    }
                 }
             }
-        } else {
-            // webSocket connection has been closed, exit the loop
-            break;
+
+            // Handle sending messages from the channel to the WebSocket
+            Some(message) = rx.recv() => {
+                if socket.send(Message::Text(message)).await.is_err() {
+                    error!("Client disconnected");
+                    break;
+                }
+            }
         }
     }
 
-    // notify listeners to shut down
-    let _ = shutdown_tx.send(());
-    info!("WebSocket closed, sent shutdown signal to listeners.");
+    shutdown_tx.send(()).unwrap();
+    info!("Websocket connection closed");
+}
+
+async fn handle_incomming_message(
+    tx: mpsc::Sender<String>,
+    shutdown_rx: watch::Receiver<()>,
+    rcm: State<ConnectionManager>,
+    session_id: &String,
+    message: &str,
+) {
+    match serde_json::from_str::<Request>(message) {
+        Ok(request) => {
+            let user_id: Option<String> = match utils::decode_jwt(&request.jwt) {
+                Ok(claims) => {
+                    if claims.aud != session_id.as_str() {
+                        error!("Invalid session ID");
+                        None
+                    } else {
+                        Some(claims.sub)
+                    }
+                }
+                Err(_) => {
+                    error!("Failed to decode JWT: {}", request.jwt);
+                    None
+                }
+            };
+
+            // handle commands
+            let response = if user_id.is_none() {
+                Ok(Response {
+                    success: false,
+                    response: "No user ID".to_string(),
+                })
+            } else if request.command == "register" {
+                start_listeners(
+                    tx,
+                    shutdown_rx,
+                    rcm.clone(),
+                    &session_id,
+                    &user_id.unwrap_or("".to_string()),
+                )
+                .await
+            } else if request.command == "request-file" {
+                request_file(
+                    rcm.clone(),
+                    session_id,
+                    &user_id.unwrap_or("".to_string()),
+                    &request.data,
+                )
+                .await
+            } else if request.command == "acknowledge-file-request" {
+                acknowledge_file_request(
+                    rcm.clone(),
+                    session_id,
+                    &user_id.unwrap_or("".to_string()),
+                    &request.data,
+                )
+                .await
+            } else if request.command == "ready-for-file-transfer" {
+                ready_for_file_transfer(
+                    rcm.clone(),
+                    &user_id.unwrap_or("".to_string()),
+                    &request.data,
+                )
+                .await
+            } else if request.command == "add-chunk" {
+                add_chunk(
+                    rcm.clone(),
+                    &user_id.unwrap_or("".to_string()),
+                    &request.data,
+                )
+                .await
+            } else {
+                Ok(Response {
+                    success: false,
+                    response: format!("Unknown command: {}", request.command),
+                })
+            }
+            .unwrap_or(Response {
+                success: false,
+                response: "Error".to_string(),
+            });
+
+            info!("Response: {:?}", response.response);
+        }
+        Err(e) => error!("Failed to deserialize incoming message: {}", e),
+    }
 }
 
 trait WsMsgData {}
@@ -288,63 +279,83 @@ struct WsMsgAddChunk {
 }
 impl WsMsgData for WsMsgAddChunk {}
 
-async fn redis_listener(
-    ws: Arc<Mutex<WebSocket>>,
+async fn start_listeners(
+    tx: mpsc::Sender<String>,
+    mut shutdown_rx: watch::Receiver<()>,
     rcm: State<ConnectionManager>,
-    mut shutdown_signal: watch::Receiver<()>,
-    session_id: String,
-    user_id: String,
-) {
-    let mut interval = time::interval(Duration::from_millis(100));
+    session_id: &String,
+    user_id: &String,
+) -> Result<Response, String> {
+    info!("start listening");
+    info!("{:?}", LISTENERS);
+    if LISTENERS.insert(user_id.clone(), ()).is_none() {
+        let session_id = session_id.clone();
+        let user_id = user_id.clone();
 
-    loop {
-        tokio::select! {
-            _ = interval.tick() => {
-                // acknowledge-file-request \\
-                match msg_acknowledge_file_request(ws.clone(), rcm.clone(), &session_id, &user_id).await {
-                    Ok(_) => (),
-                    Err(e) => {
-                        error!("Message acknowledge-file-request failed: {}", e);
-                        continue;
-                    },
-                }
+        let mut interval = time::interval(Duration::from_millis(100));
 
-                // prepare-for-file-transfer \\v
-                match msg_prepare_for_file_request(ws.clone(), rcm.clone(), &session_id, &user_id).await {
-                    Ok(_) => (),
-                    Err(e) => {
-                        error!("Message prepare-for-file-transfer failed: {}", e);
-                        continue;
-                    },
-                }
+        tokio::spawn(async move {
+            loop {
+                tokio::select! {
+                        _ = interval.tick() => {
+                        // acknowledge-file-request \\
+                        match msg_acknowledge_file_request(tx.clone(), rcm.clone(), &session_id, &user_id)
+                            .await
+                        {
+                            Ok(_) => (),
+                            Err(e) => {
+                                error!("Message acknowledge-file-request failed: {}", e);
+                                continue;
+                            }
+                        }
 
-                // send-next-chunk \\
-                match msg_send_next_chunk(ws.clone(), rcm.clone(), &user_id).await {
-                    Ok(_) => (),
-                    Err(e) => {
-                        error!("Message send-next-chunk failed: {}", e);
-                        continue;
-                    },
-                }
+                        // prepare-for-file-transfer \\
+                        match msg_prepare_for_file_request(tx.clone(), rcm.clone(), &session_id, &user_id)
+                            .await
+                        {
+                            Ok(_) => (),
+                            Err(e) => {
+                                error!("Message prepare-for-file-transfer failed: {}", e);
+                                continue;
+                            }
+                        }
 
-                // add-chunk \\
-                match msg_add_chunk(ws.clone(), rcm.clone(), &user_id).await {
-                    Ok(_) => (),
-                    Err(e) => {
-                        error!("Message add-chunk failed: {}", e);
-                        continue;
-                    },
+                        // send-next-chunk \\
+                        match msg_send_next_chunk(tx.clone(), rcm.clone(), &user_id).await {
+                            Ok(_) => (),
+                            Err(e) => {
+                                error!("Message send-next-chunk failed: {}", e);
+                                continue;
+                            }
+                        }
+
+                        // add-chunk \\
+                        match msg_add_chunk(tx.clone(), rcm.clone(), &user_id).await {
+                            Ok(_) => (),
+                            Err(e) => {
+                                error!("Message add-chunk failed: {}", e);
+                                continue;
+                            }
+                        }
+                    }
+                    _ = shutdown_rx.changed() => {
+                        info!("Listener shutdown signal received.");
+                        LISTENERS.remove(&user_id);
+                        break;
+                    }
                 }
             }
 
-            _ = shutdown_signal.changed() => {
-                info!("Listener shutdown signal received.");
-                break;
-            }
-        }
+            info!("Listener terminated.");
+        });
+    } else {
+        return Err("Listener already started".to_string());
     }
 
-    info!("Listener terminated.");
+    Ok(Response {
+        success: true,
+        response: "Registered".to_string(),
+    })
 }
 
 #[derive(Deserialize)]
@@ -409,7 +420,7 @@ async fn acknowledge_file_request(
 ) -> Result<Response, String> {
     let data = utils::deserialize_data::<ReqAcknowledgeFileRequest>(&data)?;
 
-    let request_id = utils::get_uuid();
+    let request_id = utils::get_uuid(); // TODO! gen in msg_... and sent
 
     let key = format!(
         "file.req.ackn:{}:{}:{}",
@@ -518,7 +529,7 @@ async fn add_chunk(
 }
 
 async fn msg_acknowledge_file_request(
-    ws: Arc<Mutex<WebSocket>>,
+    tx: mpsc::Sender<String>,
     rcm: State<ConnectionManager>,
     session_id: &String,
     user_id: &String,
@@ -527,6 +538,8 @@ async fn msg_acknowledge_file_request(
         Ok(files) => files,
         Err(_) => Vec::new(),
     };
+
+    // info!("{:?}", user_files);
 
     if user_files.is_empty() {
         return Ok(());
@@ -578,7 +591,7 @@ async fn msg_acknowledge_file_request(
             }
 
             let message = WsMessage {
-                request_id: "".to_string(),
+                request_id: "".to_string(), // TODO!
                 command: "acknowledge-file-request".to_string(),
                 data: WsMsgAcknowledgeFileRequest {
                     public_key: public_key.clone(),
@@ -588,14 +601,10 @@ async fn msg_acknowledge_file_request(
             };
 
             info!("Sending message");
-
             let message_str = serde_json::to_string(&message).unwrap();
-            if let Err(e) = {
-                info!("LOCK msg_acknowledge_file_request");
-                let mut ws_lock = ws.lock().await;
-                ws_lock.send(Message::Text(message_str)).await
-            } {
-                error!("Failed to send message: {}", e);
+            if tx.send(message_str).await.is_err() {
+                error!("Receiver dropped");
+                return Err("Receiver dropped".to_string());
             }
             info!("Sending message done");
         }
@@ -605,7 +614,7 @@ async fn msg_acknowledge_file_request(
 }
 
 async fn msg_prepare_for_file_request(
-    ws: Arc<Mutex<WebSocket>>,
+    tx: mpsc::Sender<String>,
     rcm: State<ConnectionManager>,
     session_id: &String,
     user_id: &String,
@@ -628,6 +637,10 @@ async fn msg_prepare_for_file_request(
             }
         };
 
+        if req_data.len() < 6 {
+            continue;
+        }
+
         // TODO del file.req.prep:request_id
         match utils::redis_handler::del(rcm.clone(), &key).await {
             Ok(_) => (),
@@ -640,7 +653,7 @@ async fn msg_prepare_for_file_request(
         };
 
         // TODO del file.req.ackn:{session.id}:{filename}:{user.id}
-        let filename = req_data[1].clone();
+        let filename = req_data[5].clone();
         let key = format!("file.req.ackn:{}:{}:{}", &session_id, &filename, &user_id);
         match utils::redis_handler::del(rcm.clone(), &key).await {
             Ok(_) => (),
@@ -656,27 +669,26 @@ async fn msg_prepare_for_file_request(
             request_id: request_id.clone(),
             command: "prepare-for-file-transfer".to_string(),
             data: WsMsgPrepareForFileTransfer {
-                public_key: req_data[2].clone(),
+                public_key: req_data[1].clone(),
                 filename: filename.clone(),
-                amount_of_chunks: req_data[0].parse().unwrap_or(0),
+                amount_of_chunks: req_data[3].parse().unwrap_or(0),
             },
         };
 
+        info!("Sending message");
         let message_str = serde_json::to_string(&message).unwrap();
-        if let Err(e) = {
-            info!("LOCK msg_prepare_for_file_request");
-            let mut ws_lock = ws.lock().await;
-            ws_lock.send(Message::Text(message_str)).await
-        } {
-            error!("Failed to send message: {}", e);
+        if tx.send(message_str).await.is_err() {
+            error!("Receiver dropped");
+            return Err("Receiver dropped".to_string());
         }
+        info!("Sending message done");
     }
 
     Ok(())
 }
 
 async fn msg_send_next_chunk(
-    ws: Arc<Mutex<WebSocket>>,
+    tx: mpsc::Sender<String>,
     rcm: State<ConnectionManager>,
     user_id: &String,
 ) -> Result<(), String> {
@@ -712,14 +724,13 @@ async fn msg_send_next_chunk(
                     data: WsMsgSendNextChunk { last_chunk_nr: 0 },
                 };
 
+                info!("Sending message");
                 let message_str = serde_json::to_string(&message).unwrap();
-                if let Err(e) = {
-                    info!("LOCK msg_send_next_chunk");
-                    let mut ws_lock = ws.lock().await;
-                    ws_lock.send(Message::Text(message_str)).await
-                } {
-                    error!("Failed to send message: {}", e);
+                if tx.send(message_str).await.is_err() {
+                    error!("Receiver dropped");
+                    return Err("Receiver dropped".to_string());
                 }
+                info!("Sending message done");
                 continue;
             }
         };
@@ -747,21 +758,20 @@ async fn msg_send_next_chunk(
             },
         };
 
+        info!("Sending message");
         let message_str = serde_json::to_string(&message).unwrap();
-        if let Err(e) = {
-            info!("LOCK msg_send_next_chunk");
-            let mut ws_lock = ws.lock().await;
-            ws_lock.send(Message::Text(message_str)).await
-        } {
-            error!("Failed to send message: {}", e);
+        if tx.send(message_str).await.is_err() {
+            error!("Receiver dropped");
+            return Err("Receiver dropped".to_string());
         }
+        info!("Sending message done");
     }
 
     Ok(())
 }
 
 async fn msg_add_chunk(
-    ws: Arc<Mutex<WebSocket>>,
+    tx: mpsc::Sender<String>,
     rcm: State<ConnectionManager>,
     user_id: &String,
 ) -> Result<(), String> {
@@ -798,14 +808,13 @@ async fn msg_add_chunk(
         if chunk == "FIN" {
             clean_up_request_data(rcm.clone(), &request_id).await;
 
+            info!("Sending message");
             let message_str = serde_json::to_string(&message).unwrap();
-            if let Err(e) = {
-                info!("LOCK msg_add_chunk 1");
-                let mut ws_lock = ws.lock().await;
-                ws_lock.send(Message::Text(message_str)).await
-            } {
-                error!("Failed to send message: {}", e);
+            if tx.send(message_str).await.is_err() {
+                error!("Receiver dropped");
+                return Err("Receiver dropped".to_string());
             }
+            info!("Sending message done");
         } else {
             let chunk_parts: Vec<&str> = chunk.split('@').collect();
             let chunk_nr = chunk_parts[0].parse().unwrap_or(0);
@@ -817,14 +826,13 @@ async fn msg_add_chunk(
                 iv: chunk_parts[1].to_string(),
             };
 
+            info!("Sending message");
             let message_str = serde_json::to_string(&message).unwrap();
-            if let Err(e) = {
-                info!("LOCK msg_add_chunk 2");
-                let mut ws_lock = ws.lock().await;
-                ws_lock.send(Message::Text(message_str)).await
-            } {
-                error!("Failed to send message: {}", e);
+            if tx.send(message_str).await.is_err() {
+                error!("Receiver dropped");
+                return Err("Receiver dropped".to_string());
             }
+            info!("Sending message done");
         }
     }
 
