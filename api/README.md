@@ -304,6 +304,7 @@ The `data` attribute has to be stringified.
 
 ```JSON
 "data": {
+    "request_id": String,
     "public_key": String,
     "amount_of_chunks": Number,
     "filename": String,

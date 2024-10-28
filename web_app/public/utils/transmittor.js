@@ -1,5 +1,5 @@
 import { nextTick } from "vue";
-import { generateKeyPair, deriveSharedSecret, convertKeyToBase64, importKeyFromBase64, exportPrivateKeyToBase64, importPrivateKeyFromBase64, exportSharedSecretToBase64, importSharedSecretFromBase64, ivToBase64, base64ToIv, encryptData, decryptData, downloadDataUrl, getFile } from '~/public/utils/utils';
+import { generateKeyPair, deriveSharedSecret, convertKeyToBase64, importKeyFromBase64, exportPrivateKeyToBase64, importPrivateKeyFromBase64, exportSharedSecretToBase64, importSharedSecretFromBase64, generateIv, ivToBase64, base64ToIv, encryptedDataToBase64, base64ToEncryptedData, encryptData, decryptData, downloadDataUrl, getFile, storeLargeString, getLargeString } from '~/public/utils/utils';
 
 export function trnsRegister(socket) {
     console.log('trnsRegister');
@@ -91,7 +91,7 @@ async function trnsHandleAcknowledgeFileRequest(socket, requestId, data) {
     const file = await getFile(filename);
     const amountOfChunks = Math.ceil(file.length / 1024)
 
-    await trnsAcknwoledgeFileRequest(socket, base64PublicKey, amountOfChunks, filename, userId);
+    await trnsAcknwoledgeFileRequest(socket, requestId, base64PublicKey, amountOfChunks, filename, userId);
 }
 
 async function trnsHandlePrepareForFileTransfer(socket, requestId, data) {
@@ -99,6 +99,9 @@ async function trnsHandlePrepareForFileTransfer(socket, requestId, data) {
     const clientPublicKey = await importKeyFromBase64(data.public_key);
     const filename = data.filename;
     const amountOfChunks = data.amount_of_chunks;
+
+    const requestIdCookie = useCookie(requestId);
+    requestIdCookie.value = filename;
 
     const publicKeyCookie = useCookie(`${filename}-publicKey`);
     const privateKeyCookie = useCookie(`${filename}-privateKey`);
@@ -145,40 +148,59 @@ async function trnsHandleSendNextChunk(socket, requestId, data) {
     const base64Iv = await ivToBase64(iv);
 
     const encryptedChunk = await encryptData(secret, iv, chunk);
+    const base64Chunk = encryptedDataToBase64(encryptedChunk);
 
-    await trnsAddChunk(socket, requestId, isLastChunk, lastChunkNr + 1, encryptedChunk, base64Iv);
-
-    console.log(filename, lastChunkNr + 1);
+    await trnsAddChunk(socket, requestId, isLastChunk, lastChunkNr + 1, base64Chunk, base64Iv);
 }
 
 async function trnsHandleAddChunk(socket, requestId, data) {
     console.log('trnsHandleAddChunk');
     const isLastChunk = data.is_last_chunk;
     const chunkNr = data.chunk_nr;
-    const encryptedChunk = data.chunk;
+    const encryptedChunk = base64ToEncryptedData(data.chunk);
     const iv = await base64ToIv(data.iv);
+
+    if (isLastChunk) {
+        getLargeString(`${requestId}-file`)
+            .then(async (file) => {
+                console.log(file);
+                // const file64 = file.split(',')[1];
+                // const fileDecoded = atob(file64);
+                // const data = fileDecoded.split(';')[2];
+                // const dataUrl = data.split(',')[1];
+                let dataUrl = file.split(",")[1];
+                dataUrl = atob(dataUrl);
+                const dataUrlParts = dataUrl.split(";");
+                dataUrl = `${dataUrlParts[1]};${dataUrlParts[2]}`;
+
+                const requestIdCookie = useCookie(requestId);
+                downloadDataUrl(dataUrl, requestIdCookie.value);
+            })
+            .catch(async (error) => {
+                console.error(error);
+            });
+        return;
+    }
 
     const secretCookie = useCookie(`${requestId}-secret`);
     const secret = await importSharedSecretFromBase64(secretCookie.value);
 
     const chunk = await decryptData(secret, iv, encryptedChunk);
 
-    const fileCookie = useCookie(`${requestId}-file`);
-    let file = fileCookie.value;
-    file = [file.slice(0, chunkNr * 1024), chunk, file.slice(chunkNr * 1024)].join('')
-    fileCookie.value = file;
-
-    if (isLastChunk) {
-        console.log(file);
-        downloadDataUrl(fileCookie.value, 'test.sh');
-    }
-
-    console.log(requestId, chunkNr);
+    getLargeString(`${requestId}-file`)
+        .then(async (file) => {
+            file = [file.slice(0, chunkNr * 1024), chunk, file.slice(chunkNr * 1024)].join('');
+            await storeLargeString(`${requestId}-file`, file);
+        })
+        .catch(async (error) => {
+            console.error(error);
+            await storeLargeString(`${requestId}-file`, chunk);
+        });
 }
 
 
 
-async function trnsAcknwoledgeFileRequest(socket, publicKey, amountOfChunks, filename, userId) {
+async function trnsAcknwoledgeFileRequest(socket, requestId, publicKey, amountOfChunks, filename, userId) {
     console.log('trnsAcknwoledgeFileRequest');
     const jwtCookie = useCookie('jwt');
 
@@ -186,6 +208,7 @@ async function trnsAcknwoledgeFileRequest(socket, publicKey, amountOfChunks, fil
         jwt: jwtCookie.value,
         command: 'acknowledge-file-request',
         data: JSON.stringify({
+            request_id: requestId,
             public_key: publicKey,
             amount_of_chunks: amountOfChunks,
             filename: filename,
@@ -207,7 +230,7 @@ async function trnsReadyForFileTransfer(socket, requestId) {
     }));
 }
 
-async function trnsAddChunk(socket, requestId, isLastChunk, chunkNr, encryptedChunk, iv) {
+async function trnsAddChunk(socket, requestId, isLastChunk, chunkNr, base64Chunk, iv) {
     console.log('trnsAddChunk');
     const jwtCookie = useCookie('jwt');
 
@@ -218,7 +241,7 @@ async function trnsAddChunk(socket, requestId, isLastChunk, chunkNr, encryptedCh
             request_id: requestId,
             is_last_chunk: isLastChunk,
             chunk_nr: chunkNr,
-            chunk: encryptedChunk,
+            chunk: base64Chunk,
             iv: iv
         })
     }));

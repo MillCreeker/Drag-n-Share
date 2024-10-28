@@ -243,6 +243,17 @@ pub fn decode_jwt_from_header(ref headers: &HeaderMap) -> Result<Claims, (Status
     Ok(claims)
 }
 
+pub fn get_hash_value(hash_vec: &Vec<String>, key: &str) -> Option<String> {
+    let key_idx = hash_vec.iter().position(|x| x == key);
+    if key_idx.is_none() {
+        return None;
+    }
+
+    hash_vec
+        .get(key_idx.unwrap() + 1)
+        .map(|x| x.to_string())
+}
+
 pub fn check_user_is_host(
     ref headers: &HeaderMap,
     session_id: &str,

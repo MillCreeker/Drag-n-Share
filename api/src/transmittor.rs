@@ -35,7 +35,7 @@ use redis::aio::ConnectionManager;
 use env_logger::Env;
 use log::{error, info};
 
-const MAX_CHUNK_SIZE: usize = 1024;
+const MAX_CHUNK_SIZE: usize = 2000;
 const MAX_QUEUE_SIZE: i64 = 16;
 
 static LISTENERS: Lazy<Arc<DashMap<String, ()>>> = Lazy::new(|| Arc::new(DashMap::new()));
@@ -292,7 +292,8 @@ async fn start_listeners(
         let session_id = session_id.clone();
         let user_id = user_id.clone();
 
-        let mut interval = time::interval(Duration::from_millis(100));
+        let mut interval = time::interval(Duration::from_millis(10));
+        // let mut interval = time::interval(Duration::from_secs(5));
 
         tokio::spawn(async move {
             loop {
@@ -406,6 +407,7 @@ async fn request_file(
 
 #[derive(Deserialize)]
 struct ReqAcknowledgeFileRequest {
+    request_id: String,
     public_key: String,
     amount_of_chunks: u32,
     filename: String,
@@ -420,29 +422,12 @@ async fn acknowledge_file_request(
 ) -> Result<Response, String> {
     let data = utils::deserialize_data::<ReqAcknowledgeFileRequest>(&data)?;
 
-    let request_id = utils::get_uuid(); // TODO! gen in msg_... and sent
-
     let key = format!(
         "file.req.ackn:{}:{}:{}",
         &session_id, &data.filename, &data.user_id
     );
     utils::handle_redis_error(
-        utils::redis_handler::set(rcm.clone(), &key, &request_id, None).await,
-    )?;
-
-    let key = format!("file.req.users:{}", &request_id);
-    utils::handle_redis_error(
-        utils::redis_handler::sadd(rcm.clone(), &key, &data.user_id, None).await,
-    )?;
-    utils::handle_redis_error(utils::redis_handler::sadd(rcm.clone(), &key, &user_id, None).await)?;
-
-    let key = format!("file.reqs.receiver:{}", &data.user_id);
-    utils::handle_redis_error(
-        utils::redis_handler::sadd(rcm.clone(), &key, &request_id, None).await,
-    )?;
-    let key = format!("file.reqs.sender:{}", &user_id);
-    utils::handle_redis_error(
-        utils::redis_handler::sadd(rcm.clone(), &key, &request_id, None).await,
+        utils::redis_handler::set(rcm.clone(), &key, &data.request_id, None).await,
     )?;
 
     let items = [
@@ -451,7 +436,7 @@ async fn acknowledge_file_request(
         ("amount.of.chunks", &data.amount_of_chunks.to_string()),
     ];
 
-    let key = format!("file.req.prep:{}", &request_id);
+    let key = format!("file.req.prep:{}", &data.request_id);
     utils::handle_redis_error(
         utils::redis_handler::hset_multiple(rcm.clone(), &key, &items, None).await,
     )?;
@@ -499,13 +484,20 @@ async fn add_chunk(
     user_id: &String,
     data: &String,
 ) -> Result<Response, String> {
+    info!("add_chunk");
+
     let data = utils::deserialize_data::<ReqAddChunk>(&data)?;
 
     utils::check_user_is_in_file_request(rcm.clone(), &data.request_id, user_id).await?;
 
+    info!("in_request");
+
     if data.chunk.len() > MAX_CHUNK_SIZE {
+        error!("Chunk is too large: {}", &data.chunk.len());
         return Err("Chunk is too large".to_string());
     }
+
+    info!("chunk size");
 
     let key = format!("file.req.chunks:{}", &data.request_id);
     let queue_size =
@@ -515,11 +507,13 @@ async fn add_chunk(
         return Err("Queue is full".to_string());
     }
 
+    info!("queue size");
+
     let queue_data = format!("{}@{}@{}", &data.chunk_nr, &data.iv, &data.chunk);
-    utils::handle_redis_error(utils::redis_handler::lpush(rcm.clone(), &key, &queue_data).await)?;
+    utils::handle_redis_error(utils::redis_handler::lpush(rcm.clone(), &key, &queue_data, None).await)?;
 
     if data.is_last_chunk {
-        utils::handle_redis_error(utils::redis_handler::lpush(rcm, &key, "FIN").await)?;
+        utils::handle_redis_error(utils::redis_handler::lpush(rcm, &key, "FIN", None).await)?;
     }
 
     Ok(Response {
@@ -566,8 +560,8 @@ async fn msg_acknowledge_file_request(
             Err(_) => continue,
         };
 
-        for user_id in user_ids {
-            let key = format!("file.req:{}:{}:{}", &session_id, &file, &user_id);
+        for rec_user_id in user_ids {
+            let key = format!("file.req:{}:{}:{}", &session_id, &file, &rec_user_id);
             let public_key = match utils::redis_handler::get(rcm.clone(), &key).await {
                 Ok(public_key) => public_key,
                 Err(_) => continue,
@@ -583,15 +577,50 @@ async fn msg_acknowledge_file_request(
 
             // TODO srem file.reqs:session.id:filename
             let key = format!("file.reqs:{}:{}", &session_id, &file);
-            match utils::redis_handler::srem(rcm.clone(), &key, &user_id).await {
+            match utils::redis_handler::srem(rcm.clone(), &key, &rec_user_id).await {
                 Ok(_) => (),
                 Err(_) => {
                     error!("Failed to delete file.reqs:session.id:filename");
                 }
             }
 
+            let request_id = utils::get_uuid();
+
+            let key = format!("file.req.users:{}", &request_id);
+            match utils::redis_handler::sadd(rcm.clone(), &key, &rec_user_id, None).await {
+                Ok(_) => (),
+                Err(_) => {
+                    error!("Failed to add file.req.users:request.id");
+                    continue;
+                }
+            }
+            match utils::redis_handler::sadd(rcm.clone(), &key, &user_id, None).await {
+                Ok(_) => (),
+                Err(_) => {
+                    error!("Failed to add file.req.users:request.id");
+                    continue;
+                }
+            }
+
+            let key = format!("file.reqs.receiver:{}", &rec_user_id);
+            match utils::redis_handler::sadd(rcm.clone(), &key, &request_id, None).await {
+                Ok(_) => (),
+                Err(_) => {
+                    error!("Failed to add file.reqs.receiver:user.id");
+                    continue;
+                }
+            }
+            let key = format!("file.reqs.sender:{}", &user_id);
+            match utils::redis_handler::sadd(rcm.clone(), &key, &request_id, None).await {
+                Ok(_) => (),
+                Err(_) => {
+                    error!("Failed to add file.reqs.sender:user.id");
+                    continue;
+                }
+            }
+
             let message = WsMessage {
-                request_id: "".to_string(), // TODO!
+                request_id,
                 command: "acknowledge-file-request".to_string(),
                 data: WsMsgAcknowledgeFileRequest {
                     public_key: public_key.clone(),
@@ -653,7 +682,14 @@ async fn msg_prepare_for_file_request(
         };
 
         // TODO del file.req.ackn:{session.id}:{filename}:{user.id}
-        let filename = req_data[5].clone();
+        info!("{:?}", req_data);
+        let filename = utils::get_hash_value(&req_data, "filename");
+        if filename.is_none() {
+            continue;
+        }
+        let filename = filename.unwrap();
+        info!("{}", filename);
+
         let key = format!("file.req.ackn:{}:{}:{}", &session_id, &filename, &user_id);
         match utils::redis_handler::del(rcm.clone(), &key).await {
             Ok(_) => (),
@@ -665,13 +701,27 @@ async fn msg_prepare_for_file_request(
             }
         }
 
+        let public_key = utils::get_hash_value(&req_data, "public.key");
+        if public_key.is_none() {
+            continue;
+        }
+        let public_key = public_key.unwrap();
+        info!("{}", public_key);
+
+        let amount_of_chunks = utils::get_hash_value(&req_data, "amount.of.chunks");
+        if amount_of_chunks.is_none() {
+            continue;
+        }
+        let amount_of_chunks = amount_of_chunks.unwrap();
+        info!("{}", amount_of_chunks);
+
         let message = WsMessage {
             request_id: request_id.clone(),
             command: "prepare-for-file-transfer".to_string(),
             data: WsMsgPrepareForFileTransfer {
-                public_key: req_data[1].clone(),
+                public_key: public_key.clone(),
                 filename: filename.clone(),
-                amount_of_chunks: req_data[3].parse().unwrap_or(0),
+                amount_of_chunks: amount_of_chunks.parse().unwrap_or(0),
             },
         };
 
@@ -735,16 +785,16 @@ async fn msg_send_next_chunk(
             }
         };
 
-        if chunk == "FIN" {
-            continue;
-        }
-
-        match utils::redis_handler::lpush(rcm.clone(), &key, &chunk).await {
+        match utils::redis_handler::lpush(rcm.clone(), &key, &chunk, None).await {
             Ok(_) => (),
             Err(_) => {
                 error!("Failed readd chunk request ID: {}", &request_id);
                 continue;
             }
+        }
+
+        if chunk == "FIN" {
+            continue;
         }
 
         let chunk_parts: Vec<&str> = chunk.split('@').collect();
@@ -807,9 +857,10 @@ async fn msg_add_chunk(
 
         if chunk == "FIN" {
             clean_up_request_data(rcm.clone(), &request_id).await;
-
+            info!("<< Last one >>");
             info!("Sending message");
             let message_str = serde_json::to_string(&message).unwrap();
+            info!("{}", message_str);
             if tx.send(message_str).await.is_err() {
                 error!("Receiver dropped");
                 return Err("Receiver dropped".to_string());

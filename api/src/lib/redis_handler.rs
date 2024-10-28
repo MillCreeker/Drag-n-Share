@@ -320,9 +320,14 @@ pub async fn lpush(
     mut rcm: State<ConnectionManager>,
     ref key: &str,
     ref val: &str,
+    expiration_time: Option<i64>,
 ) -> Result<(), (StatusCode, String)> {
     match rcm.lpush::<&str, &str, String>(&key, &val).await {
-        Ok(_) => Ok(()),
+        Ok(_) => {
+            expire(rcm, &key, expiration_time.unwrap_or(EXPIRATION_TIME)).await?;
+
+            return Ok(());
+        },
         Err(e) => {
             error!("lpush: {:?}", e);
 

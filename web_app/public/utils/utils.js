@@ -144,6 +144,13 @@ export async function importSharedSecretFromBase64(base64Key) {
     return sharedSecret;
 }
 
+export async function generateIv() {
+    const iv = new Uint8Array(12);
+    crypto.getRandomValues(iv);
+
+    return iv;
+}
+
 export function ivToBase64(iv) {
     return arrayBufferToBase64(iv.buffer);
 }
@@ -153,11 +160,12 @@ export function base64ToIv(base64) {
     return new Uint8Array(arrayBuffer);
 }
 
-export async function generateIv() {
-    const iv = new Uint8Array(12);
-    getRandomValues(iv);
+export function encryptedDataToBase64(encryptedData) {
+    return arrayBufferToBase64(encryptedData);
+}
 
-    return iv;
+export function base64ToEncryptedData(base64String) {
+    return base64ToArrayBuffer(base64String);
 }
 
 export async function encryptData(sharedSecret, iv, data) {
@@ -189,6 +197,7 @@ export async function decryptData(sharedSecret, iv, encryptedData) {
 }
 
 export function downloadDataUrl(dataUrl, filename) {
+    console.log("dataUrl: ", dataUrl);
     const link = document.createElement("a");
     link.download = filename;
     link.href = dataUrl;
@@ -261,6 +270,44 @@ export async function getFile(id) {
 
         request.onerror = (event) => {
             reject(`Failed to retrieve file ${id}: ${event.target.error}`);
+        };
+    });
+}
+
+export async function storeLargeString(id, largeString) {
+    const db = await openDatabase();
+    const transaction = db.transaction(['files'], 'readwrite');
+    const store = transaction.objectStore('files');
+
+    const request = store.put({ id, content: largeString });
+
+    request.onsuccess = () => {
+        console.log(`String ${id} stored successfully!`);
+    };
+
+    request.onerror = (event) => {
+        console.error(`Failed to store string ${id}: `, event.target.error);
+    };
+}
+
+export async function getLargeString(id) {
+    const db = await openDatabase();
+    const transaction = db.transaction(['files'], 'readonly');
+    const store = transaction.objectStore('files');
+
+    return new Promise((resolve, reject) => {
+        const request = store.get(id);
+
+        request.onsuccess = () => {
+            if (request.result) {
+                resolve(request.result.content);
+            } else {
+                reject(`String with ID ${id} not found`);
+            }
+        };
+
+        request.onerror = (event) => {
+            reject(`Failed to retrieve string ${id}: ${event.target.error}`);
         };
     });
 }
