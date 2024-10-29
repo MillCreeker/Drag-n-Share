@@ -164,3 +164,11 @@ There is also a limit to the amount of chunks in the queue.
 ### Data Structure
 
 `<chunk.nr>@<iv>@<chunk>`
+
+## file.req.last.chunk:\<request.id\>
+
+Last chunk number added to the queue.
+
+### Data Structure
+
+`<chunk.nr>`

@@ -160,12 +160,22 @@ export function base64ToIv(base64) {
     return new Uint8Array(arrayBuffer);
 }
 
-export function encryptedDataToBase64(encryptedData) {
-    return arrayBufferToBase64(encryptedData);
+export function arrayBufferToHex(arrayBuffer) {
+    const byteArray = new Uint8Array(arrayBuffer);
+    let hexString = '';
+    byteArray.forEach(byte => {
+        hexString += byte.toString(16).padStart(2, '0');
+    });
+    return hexString;
 }
 
-export function base64ToEncryptedData(base64String) {
-    return base64ToArrayBuffer(base64String);
+export function hexToArrayBuffer(hexString) {
+    const length = hexString.length / 2;
+    const byteArray = new Uint8Array(length);
+    for (let i = 0; i < length; i++) {
+        byteArray[i] = parseInt(hexString.substr(i * 2, 2), 16);
+    }
+    return byteArray.buffer;
 }
 
 export async function encryptData(sharedSecret, iv, data) {
@@ -197,14 +207,29 @@ export async function decryptData(sharedSecret, iv, encryptedData) {
 }
 
 export function downloadDataUrl(dataUrl, filename) {
-    console.log("dataUrl: ", dataUrl);
-    const link = document.createElement("a");
+    // Split the data URL to get the MIME type and the base64 data
+    const [metadata, base64Data] = dataUrl.split(',');
+    const mimeType = metadata.match(/:(.*?);/)[1];
+
+    // Decode the base64 data and create a Blob
+    const binary = atob(base64Data);
+    const array = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) {
+        array[i] = binary.charCodeAt(i);
+    }
+    const blob = new Blob([array], { type: mimeType });
+
+    // Create an object URL for the Blob and trigger download
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
     link.download = filename;
-    link.href = dataUrl;
     document.body.appendChild(link);
     link.click();
+
+    // Clean up
     document.body.removeChild(link);
-    // delete link;
+    URL.revokeObjectURL(url);
 };
 
 function openDatabase() {

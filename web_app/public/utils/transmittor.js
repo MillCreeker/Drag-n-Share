@@ -1,5 +1,5 @@
 import { nextTick } from "vue";
-import { generateKeyPair, deriveSharedSecret, convertKeyToBase64, importKeyFromBase64, exportPrivateKeyToBase64, importPrivateKeyFromBase64, exportSharedSecretToBase64, importSharedSecretFromBase64, generateIv, ivToBase64, base64ToIv, encryptedDataToBase64, base64ToEncryptedData, encryptData, decryptData, downloadDataUrl, getFile, storeLargeString, getLargeString } from '~/public/utils/utils';
+import { generateKeyPair, deriveSharedSecret, convertKeyToBase64, importKeyFromBase64, exportPrivateKeyToBase64, importPrivateKeyFromBase64, exportSharedSecretToBase64, importSharedSecretFromBase64, generateIv, ivToBase64, base64ToIv, arrayBufferToHex, hexToArrayBuffer, encryptData, decryptData, downloadDataUrl, getFile, storeLargeString, getLargeString } from '~/public/utils/utils';
 
 export function trnsRegister(socket) {
     console.log('trnsRegister');
@@ -131,6 +131,7 @@ async function trnsHandlePrepareForFileTransfer(socket, requestId, data) {
 async function trnsHandleSendNextChunk(socket, requestId, data) {
     console.log('trnsHandleSendNextChunk');
     const lastChunkNr = data.last_chunk_nr;
+    console.log('lastChunkNr', lastChunkNr);
 
     const requestIdCookie = useCookie(requestId);
 
@@ -148,33 +149,30 @@ async function trnsHandleSendNextChunk(socket, requestId, data) {
     const base64Iv = await ivToBase64(iv);
 
     const encryptedChunk = await encryptData(secret, iv, chunk);
-    const base64Chunk = encryptedDataToBase64(encryptedChunk);
+    const hexChunk = arrayBufferToHex(encryptedChunk);
 
-    await trnsAddChunk(socket, requestId, isLastChunk, lastChunkNr + 1, base64Chunk, base64Iv);
+    await trnsAddChunk(socket, requestId, isLastChunk, lastChunkNr + 1, hexChunk, base64Iv);
 }
 
 async function trnsHandleAddChunk(socket, requestId, data) {
     console.log('trnsHandleAddChunk');
     const isLastChunk = data.is_last_chunk;
     const chunkNr = data.chunk_nr;
-    const encryptedChunk = base64ToEncryptedData(data.chunk);
+    console.log('chunkNr', chunkNr);
+    const encryptedChunk = hexToArrayBuffer(data.chunk);
     const iv = await base64ToIv(data.iv);
 
     if (isLastChunk) {
         getLargeString(`${requestId}-file`)
             .then(async (file) => {
+                console.log('|||||||||||||||||||||||||||||');
                 console.log(file);
-                // const file64 = file.split(',')[1];
-                // const fileDecoded = atob(file64);
-                // const data = fileDecoded.split(';')[2];
-                // const dataUrl = data.split(',')[1];
-                let dataUrl = file.split(",")[1];
-                dataUrl = atob(dataUrl);
-                const dataUrlParts = dataUrl.split(";");
-                dataUrl = `${dataUrlParts[1]};${dataUrlParts[2]}`;
+                console.log('|||||||||||||||||||||||||||||');
+                const fileParts = file.split(',');
+                const decodedFile = atob(fileParts[1]);
 
                 const requestIdCookie = useCookie(requestId);
-                downloadDataUrl(dataUrl, requestIdCookie.value);
+                downloadDataUrl(decodedFile, requestIdCookie.value);
             })
             .catch(async (error) => {
                 console.error(error);
@@ -186,9 +184,11 @@ async function trnsHandleAddChunk(socket, requestId, data) {
     const secret = await importSharedSecretFromBase64(secretCookie.value);
 
     const chunk = await decryptData(secret, iv, encryptedChunk);
+    console.log('chunk', chunk);
 
     getLargeString(`${requestId}-file`)
         .then(async (file) => {
+            // console.log('file', file);
             file = [file.slice(0, chunkNr * 1024), chunk, file.slice(chunkNr * 1024)].join('');
             await storeLargeString(`${requestId}-file`, file);
         })
@@ -230,8 +230,9 @@ async function trnsReadyForFileTransfer(socket, requestId) {
     }));
 }
 
-async function trnsAddChunk(socket, requestId, isLastChunk, chunkNr, base64Chunk, iv) {
+async function trnsAddChunk(socket, requestId, isLastChunk, chunkNr, hexChunk, iv) {
     console.log('trnsAddChunk');
+    console.log('chunkNr', chunkNr);
     const jwtCookie = useCookie('jwt');
 
     socket.send(JSON.stringify({
@@ -241,7 +242,7 @@ async function trnsAddChunk(socket, requestId, isLastChunk, chunkNr, base64Chunk
             request_id: requestId,
             is_last_chunk: isLastChunk,
             chunk_nr: chunkNr,
-            chunk: base64Chunk,
+            chunk: hexChunk,
             iv: iv
         })
     }));

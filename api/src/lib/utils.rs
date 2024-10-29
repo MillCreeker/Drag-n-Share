@@ -108,6 +108,9 @@ pub async fn get_random_dragon_name(
         "Balerion",
         "Meraxes",
         "Syrax",
+        "Shenron",
+        "Ran",
+        "Shaw"
     ];
 
     // first random name

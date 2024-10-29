@@ -35,7 +35,7 @@ use redis::aio::ConnectionManager;
 use env_logger::Env;
 use log::{error, info};
 
-const MAX_CHUNK_SIZE: usize = 2000;
+const MAX_CHUNK_SIZE: usize = 2400;
 const MAX_QUEUE_SIZE: i64 = 16;
 
 static LISTENERS: Lazy<Arc<DashMap<String, ()>>> = Lazy::new(|| Arc::new(DashMap::new()));
@@ -292,7 +292,7 @@ async fn start_listeners(
         let session_id = session_id.clone();
         let user_id = user_id.clone();
 
-        let mut interval = time::interval(Duration::from_millis(10));
+        let mut interval = time::interval(Duration::from_millis(500));
         // let mut interval = time::interval(Duration::from_secs(5));
 
         tokio::spawn(async move {
@@ -490,14 +490,10 @@ async fn add_chunk(
 
     utils::check_user_is_in_file_request(rcm.clone(), &data.request_id, user_id).await?;
 
-    info!("in_request");
-
     if data.chunk.len() > MAX_CHUNK_SIZE {
         error!("Chunk is too large: {}", &data.chunk.len());
         return Err("Chunk is too large".to_string());
     }
-
-    info!("chunk size");
 
     let key = format!("file.req.chunks:{}", &data.request_id);
     let queue_size =
@@ -507,14 +503,22 @@ async fn add_chunk(
         return Err("Queue is full".to_string());
     }
 
-    info!("queue size");
-
     let queue_data = format!("{}@{}@{}", &data.chunk_nr, &data.iv, &data.chunk);
     utils::handle_redis_error(utils::redis_handler::lpush(rcm.clone(), &key, &queue_data, None).await)?;
 
     if data.is_last_chunk {
-        utils::handle_redis_error(utils::redis_handler::lpush(rcm, &key, "FIN", None).await)?;
+        utils::handle_redis_error(utils::redis_handler::lpush(rcm.clone(), &key, "FIN", None).await)?;
+
+        let key = format!("file.req.last.chunk:{}", &data.request_id);
+        utils::handle_redis_error(
+            utils::redis_handler::set(rcm.clone(), &key, "FIN", None).await,
+        )?;
     }
+
+    let key = format!("file.req.last.chunk:{}", &data.request_id);
+    utils::handle_redis_error(
+        utils::redis_handler::set(rcm, &key, &data.chunk_nr.to_string(), None).await,
+    )?;
 
     Ok(Response {
         success: true,
@@ -765,8 +769,9 @@ async fn msg_send_next_chunk(
             continue;
         }
 
-        let chunk = match utils::redis_handler::lpop(rcm.clone(), &key).await {
-            Ok(chunk) => chunk,
+        let key = format!("file.req.last.chunk:{}", &request_id);
+        let last_chunk_nr = match utils::redis_handler::get(rcm.clone(), &key).await {
+            Ok(chunk_nr) => chunk_nr,
             Err(_) => {
                 let message = WsMessage {
                     request_id: request_id.clone(),
@@ -784,21 +789,11 @@ async fn msg_send_next_chunk(
                 continue;
             }
         };
-
-        match utils::redis_handler::lpush(rcm.clone(), &key, &chunk, None).await {
-            Ok(_) => (),
-            Err(_) => {
-                error!("Failed readd chunk request ID: {}", &request_id);
-                continue;
-            }
-        }
-
-        if chunk == "FIN" {
+        if last_chunk_nr == "FIN" {
             continue;
         }
 
-        let chunk_parts: Vec<&str> = chunk.split('@').collect();
-        let chunk_nr = chunk_parts[0].parse().unwrap_or(0);
+        let chunk_nr = last_chunk_nr.parse().unwrap_or(0);
 
         let message = WsMessage {
             request_id: request_id.clone(),
