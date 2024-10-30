@@ -1,4 +1,4 @@
-FROM rust:1.80.1 as build
+FROM rust:1.80.1 AS build
 
 RUN apt-get update && apt-get install -y musl-tools musl-dev
 

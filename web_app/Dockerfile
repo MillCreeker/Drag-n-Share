@@ -12,4 +12,4 @@ RUN bun run build
 
 EXPOSE 3000
 
-CMD ["NUXT_PUBLIC_API_URI=https://drag-n-share.com", "bun", ".output/server/index.mjs"]
+CMD ["bun", ".output/server/index.mjs"]
