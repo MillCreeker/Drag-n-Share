@@ -8,7 +8,7 @@ use axum_client_ip::SecureClientIp;
 use rand::seq::SliceRandom;
 use redis::aio::ConnectionManager;
 
-use log::{error, info};
+use log::error;
 
 use serde::{Deserialize, Serialize};
 use serde_json::json;

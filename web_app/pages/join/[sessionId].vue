@@ -57,7 +57,7 @@ const joinSession = async () => {
             navigateTo(`/${sessionId}`);
         }
     } catch (error) {
-        console.log(error);
+        console.error(error);
     }
 };
 

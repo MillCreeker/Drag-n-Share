@@ -39,7 +39,6 @@ export async function trnsRequestFile(socket, filename) {
 
 export async function trnsWsHandleMessage(socket, message) {
     console.log('trnsWsHandleMessage');
-    console.log('Received:', message);
     const requestId = message.request_id;
     const data = message.data;
 
@@ -158,16 +157,12 @@ async function trnsHandleAddChunk(socket, requestId, data) {
     console.log('trnsHandleAddChunk');
     const isLastChunk = data.is_last_chunk;
     const chunkNr = data.chunk_nr;
-    console.log('chunkNr', chunkNr);
     const encryptedChunk = hexToArrayBuffer(data.chunk);
     const iv = await base64ToIv(data.iv);
 
     if (isLastChunk) {
         getLargeString(`${requestId}-file`)
             .then(async (file) => {
-                console.log('|||||||||||||||||||||||||||||');
-                console.log(file);
-                console.log('|||||||||||||||||||||||||||||');
                 const fileParts = file.split(',');
                 const decodedFile = atob(fileParts[1]);
 
@@ -184,11 +179,9 @@ async function trnsHandleAddChunk(socket, requestId, data) {
     const secret = await importSharedSecretFromBase64(secretCookie.value);
 
     const chunk = await decryptData(secret, iv, encryptedChunk);
-    console.log('chunk', chunk);
 
     getLargeString(`${requestId}-file`)
         .then(async (file) => {
-            // console.log('file', file);
             file = [file.slice(0, chunkNr * 1024), chunk, file.slice(chunkNr * 1024)].join('');
             await storeLargeString(`${requestId}-file`, file);
         })
@@ -232,7 +225,6 @@ async function trnsReadyForFileTransfer(socket, requestId) {
 
 async function trnsAddChunk(socket, requestId, isLastChunk, chunkNr, hexChunk, iv) {
     console.log('trnsAddChunk');
-    console.log('chunkNr', chunkNr);
     const jwtCookie = useCookie('jwt');
 
     socket.send(JSON.stringify({

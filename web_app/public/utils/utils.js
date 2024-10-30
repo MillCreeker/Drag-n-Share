@@ -259,7 +259,7 @@ export async function storeFile(id, base64File) {
     const request = store.put({ id, fileBlob });
 
     request.onsuccess = () => {
-        console.log(`File ${id} stored successfully!`);
+        // console.log(`File ${id} stored successfully!`);
     };
 
     request.onerror = (event) => {
@@ -307,7 +307,7 @@ export async function storeLargeString(id, largeString) {
     const request = store.put({ id, content: largeString });
 
     request.onsuccess = () => {
-        console.log(`String ${id} stored successfully!`);
+        // console.log(`String ${id} stored successfully!`);
     };
 
     request.onerror = (event) => {

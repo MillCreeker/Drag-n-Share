@@ -8,8 +8,7 @@ use axum::{
 use tokio::net::TcpListener;
 
 use axum_client_ip::{SecureClientIp, SecureClientIpSource};
-use http::header::HeaderValue;
-use tower_http::cors::{AllowOrigin, Any, CorsLayer};
+use tower_http::cors::{Any, CorsLayer};
 
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -34,9 +33,6 @@ async fn main() {
 
     let cors = CorsLayer::new()
         .allow_origin(Any)
-        // .allow_origin(AllowOrigin::exact(
-        //     HeaderValue::from_str("https://drag-n-share.com").unwrap(),
-        // )) // TODO
         .allow_methods(Any)
         .allow_headers(Any);
 
@@ -75,8 +71,8 @@ async fn main() {
 }
 
 async fn ping(
-    rcm: State<ConnectionManager>,
-    secure_ip: SecureClientIp,
+    // rcm: State<ConnectionManager>,
+    // secure_ip: SecureClientIp,
 ) -> Result<(StatusCode, String), (StatusCode, String)> {
     // utils::handle_call_rate_limit(rcm, &secure_ip).await?;
 
@@ -94,7 +90,7 @@ async fn ping(
 
 async fn get_session(
     rcm: State<ConnectionManager>,
-    secure_ip: SecureClientIp,
+    // secure_ip: SecureClientIp,
     headers: HeaderMap,
 ) -> Result<(StatusCode, String), (StatusCode, String)> {
     // utils::handle_call_rate_limit(rcm.clone(), &secure_ip).await?;
@@ -187,7 +183,7 @@ async fn create_session(
 
 async fn get_id_for_session_name(
     rcm: State<ConnectionManager>,
-    secure_ip: SecureClientIp,
+    // secure_ip: SecureClientIp,
     Path(session_name): Path<String>,
 ) -> Result<(StatusCode, String), (StatusCode, String)> {
     // utils::handle_call_rate_limit(rcm.clone(), &secure_ip).await?;
@@ -221,7 +217,7 @@ async fn get_id_for_session_name(
 
 async fn get_session_metadata(
     rcm: State<ConnectionManager>,
-    secure_ip: SecureClientIp,
+    // secure_ip: SecureClientIp,
     Path(session_id): Path<String>,
 ) -> Result<(StatusCode, String), (StatusCode, String)> {
     // utils::handle_call_rate_limit(rcm.clone(), &secure_ip).await?;
@@ -303,7 +299,7 @@ struct SessionNameBody {
 
 async fn update_session(
     rcm: State<ConnectionManager>,
-    secure_ip: SecureClientIp,
+    // secure_ip: SecureClientIp,
     headers: HeaderMap,
     Path(session_id): Path<String>,
     Json(session_name_body): Json<SessionNameBody>,
@@ -394,7 +390,7 @@ struct FileMetadataResponse {
 
 async fn get_all_file_metadata_in_session(
     rcm: State<ConnectionManager>,
-    secure_ip: SecureClientIp,
+    // secure_ip: SecureClientIp,
     headers: HeaderMap,
     Path(session_id): Path<String>,
 ) -> Result<(StatusCode, String), (StatusCode, String)> {
@@ -450,7 +446,7 @@ struct FileMetadataBody {
 
 async fn add_files(
     rcm: State<ConnectionManager>,
-    secure_ip: SecureClientIp,
+    // secure_ip: SecureClientIp,
     headers: HeaderMap,
     Path(session_id): Path<String>,
     Json(files): Json<Vec<FileMetadataBody>>,
@@ -525,7 +521,7 @@ async fn add_files(
 
 async fn get_file_metadata(
     rcm: State<ConnectionManager>,
-    secure_ip: SecureClientIp,
+    // secure_ip: SecureClientIp,
     headers: HeaderMap,
     Path((session_id, file_name)): Path<(String, String)>,
 ) -> Result<(StatusCode, String), (StatusCode, String)> {
@@ -577,7 +573,7 @@ async fn get_file_metadata(
 
 async fn delete_file(
     rcm: State<ConnectionManager>,
-    secure_ip: SecureClientIp,
+    // secure_ip: SecureClientIp,
     headers: HeaderMap,
     Path((session_id, file_name)): Path<(String, String)>,
 ) -> Result<(StatusCode, String), (StatusCode, String)> {

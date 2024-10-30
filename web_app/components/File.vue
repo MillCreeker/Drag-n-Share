@@ -11,8 +11,8 @@
             </div>
             <div v-else>
                 <div class="relative w-full bg-orange-200 rounded-lg h-2" >
-                    <div class="absolute top-0 left-0 bg-orange-500 rounded-lg h-2"
-                        :style="{ width: `${(progress / total) * 100}%` }"></div>
+                    <div :class="'absolute top-0 left-0 rounded-lg h-2 ' + (isFullyDownloaded ? 'bg-yellow-500' : 'bg-orange-500')"
+                        :style="{ width: `${(currChunk / totalChunks) * 100}%` }"></div>
                 </div>
                 <i class="material-icons text-3xl text-orange-500 cursor-pointer" @click="_downloadFile">download</i>
             </div>
@@ -26,22 +26,9 @@ import { deleteFile } from '~/public/utils/api';
 
 const route = useRoute();
 
-const { filename, size, isOwner, cbRefresh, cbDownload } = defineProps(['filename', 'size', 'isOwner', 'cbRefresh', 'cbDownload']);
+const { filename, size, isOwner, cbRefresh, cbDownload, totalChunks, currChunk, isFullyDownloaded } = defineProps(['filename', 'size', 'isOwner', 'cbRefresh', 'cbDownload', 'totalChunks', 'currChunk', 'isFullyDownloaded']);
 
 let convSize = ref('');
-
-let total = ref(100);
-let progress = ref(50);
-
-const updateProgress = (newProgress, newTotal) => {
-    progress.value = newProgress;
-    if (newTotal === null) {
-        return;
-    }
-    total.value = newTotal;
-}
-
-defineExpose({ updateProgress });
 
 const _deleteFile = async () => {
     const sessionId = route.path.split('/')[1];

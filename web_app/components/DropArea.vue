@@ -30,7 +30,7 @@ onMounted(async () => {
     } catch (error) {
         throw createError({
             statusCode: 500,
-            statusMessage: 'Servers are currently offline. We\'re working on it, promis.',
+            statusMessage: 'Servers are currently offline. We\'re working on it, promise.',
             fatal: true
         });
     }

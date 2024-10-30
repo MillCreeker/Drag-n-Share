@@ -1,5 +1,3 @@
-#[allow(unused_imports)] // TODO
-use axum::routing::head;
 use axum::{
     extract::{
         ws::{Message, WebSocket, WebSocketUpgrade},
@@ -25,10 +23,9 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
-use axum_client_ip::{SecureClientIp, SecureClientIpSource};
+use axum_client_ip::SecureClientIpSource;
 
-use http::header::HeaderValue;
-use tower_http::cors::{AllowOrigin, Any, CorsLayer};
+use tower_http::cors::{Any, CorsLayer};
 
 use redis::aio::ConnectionManager;
 
@@ -53,9 +50,6 @@ async fn main() {
 
     let cors = CorsLayer::new()
         .allow_origin(Any)
-        // .allow_origin(AllowOrigin::exact(
-        //     HeaderValue::from_str("https://drag-n-share.com").unwrap(),
-        // )) // TODO
         .allow_methods(Any)
         .allow_headers(Any);
 
@@ -91,17 +85,17 @@ struct Response {
 
 async fn ws_handler(
     rcm: State<ConnectionManager>,
-    secure_ip: SecureClientIp,
+    // secure_ip: SecureClientIp,
     Path(session_id): Path<String>,
     ws: WebSocketUpgrade,
 ) -> impl IntoResponse {
     info!("Websocket connection opened");
-    ws.on_upgrade(|ws| ws_handler_inner(rcm, secure_ip, session_id, ws))
+    ws.on_upgrade(|ws| ws_handler_inner(rcm, session_id, ws))
 }
 
 async fn ws_handler_inner(
     rcm: State<ConnectionManager>,
-    secure_ip: SecureClientIp,
+    // secure_ip: SecureClientIp,
     session_id: String,
     mut socket: WebSocket,
 ) {
@@ -178,7 +172,7 @@ async fn handle_incomming_message(
             };
 
             // handle commands
-            let response = if user_id.is_none() {
+            let _response = if user_id.is_none() {
                 Ok(Response {
                     success: false,
                     response: "No user ID".to_string(),
@@ -204,7 +198,6 @@ async fn handle_incomming_message(
                 acknowledge_file_request(
                     rcm.clone(),
                     session_id,
-                    &user_id.unwrap_or("".to_string()),
                     &request.data,
                 )
                 .await
@@ -233,7 +226,7 @@ async fn handle_incomming_message(
                 response: "Error".to_string(),
             });
 
-            info!("Response: {:?}", response.response);
+            // info!("Response: {:?}", response.response);
         }
         Err(e) => error!("Failed to deserialize incoming message: {}", e),
     }
@@ -286,13 +279,12 @@ async fn start_listeners(
     session_id: &String,
     user_id: &String,
 ) -> Result<Response, String> {
-    info!("start listening");
-    info!("{:?}", LISTENERS);
+    info!("Start listening.");
     if LISTENERS.insert(user_id.clone(), ()).is_none() {
         let session_id = session_id.clone();
         let user_id = user_id.clone();
 
-        let mut interval = time::interval(Duration::from_millis(500));
+        let mut interval = time::interval(Duration::from_millis(250));
         // let mut interval = time::interval(Duration::from_secs(5));
 
         tokio::spawn(async move {
@@ -371,7 +363,7 @@ async fn request_file(
     user_id: &String,
     data: &String,
 ) -> Result<Response, String> {
-    info!("Requesting file");
+    info!("request_file");
     let data = utils::deserialize_data::<ReqRequestFile>(&data)?;
 
     let key = format!("files:{}", &session_id);
@@ -417,9 +409,10 @@ struct ReqAcknowledgeFileRequest {
 async fn acknowledge_file_request(
     rcm: State<ConnectionManager>,
     session_id: &String,
-    user_id: &String,
     data: &String,
 ) -> Result<Response, String> {
+    info!("acknowledge_file_request");
+    
     let data = utils::deserialize_data::<ReqAcknowledgeFileRequest>(&data)?;
 
     let key = format!(
@@ -457,6 +450,8 @@ async fn ready_for_file_transfer(
     user_id: &String,
     data: &String,
 ) -> Result<Response, String> {
+    info!("ready_for_file_transfer");
+
     let data = utils::deserialize_data::<ReqReadyForFileRequest>(&data)?;
 
     utils::check_user_is_in_file_request(rcm.clone(), &data.request_id, user_id).await?;
@@ -532,12 +527,12 @@ async fn msg_acknowledge_file_request(
     session_id: &String,
     user_id: &String,
 ) -> Result<(), String> {
+    info!("msg_acknowledge_file_request");
+
     let user_files = match utils::get_user_files(rcm.clone(), &session_id, &user_id).await {
         Ok(files) => files,
         Err(_) => Vec::new(),
     };
-
-    // info!("{:?}", user_files);
 
     if user_files.is_empty() {
         return Ok(());
@@ -550,7 +545,6 @@ async fn msg_acknowledge_file_request(
             Err(_) => continue,
         };
 
-        // TODO del file.reqs:session.id
         match utils::redis_handler::srem(rcm.clone(), &key, &file).await {
             Ok(_) => (),
             Err(_) => {
@@ -571,7 +565,6 @@ async fn msg_acknowledge_file_request(
                 Err(_) => continue,
             };
 
-            // TODO del file.reqs:session.id:filename:user.id
             match utils::redis_handler::del(rcm.clone(), &key).await {
                 Ok(_) => (),
                 Err(_) => {
@@ -579,7 +572,6 @@ async fn msg_acknowledge_file_request(
                 }
             };
 
-            // TODO srem file.reqs:session.id:filename
             let key = format!("file.reqs:{}:{}", &session_id, &file);
             match utils::redis_handler::srem(rcm.clone(), &key, &rec_user_id).await {
                 Ok(_) => (),
@@ -633,13 +625,11 @@ async fn msg_acknowledge_file_request(
                 },
             };
 
-            info!("Sending message");
             let message_str = serde_json::to_string(&message).unwrap();
             if tx.send(message_str).await.is_err() {
                 error!("Receiver dropped");
                 return Err("Receiver dropped".to_string());
             }
-            info!("Sending message done");
         }
     }
 
@@ -652,6 +642,8 @@ async fn msg_prepare_for_file_request(
     session_id: &String,
     user_id: &String,
 ) -> Result<(), String> {
+    info!("msg_prepare_for_file_request");
+
     let key = format!("file.reqs.receiver:{}", &user_id);
     let request_ids = utils::redis_handler::smembers(rcm.clone(), &key)
         .await
@@ -674,7 +666,6 @@ async fn msg_prepare_for_file_request(
             continue;
         }
 
-        // TODO del file.req.prep:request_id
         match utils::redis_handler::del(rcm.clone(), &key).await {
             Ok(_) => (),
             Err(_) => {
@@ -685,14 +676,11 @@ async fn msg_prepare_for_file_request(
             }
         };
 
-        // TODO del file.req.ackn:{session.id}:{filename}:{user.id}
-        info!("{:?}", req_data);
         let filename = utils::get_hash_value(&req_data, "filename");
         if filename.is_none() {
             continue;
         }
         let filename = filename.unwrap();
-        info!("{}", filename);
 
         let key = format!("file.req.ackn:{}:{}:{}", &session_id, &filename, &user_id);
         match utils::redis_handler::del(rcm.clone(), &key).await {
@@ -710,14 +698,12 @@ async fn msg_prepare_for_file_request(
             continue;
         }
         let public_key = public_key.unwrap();
-        info!("{}", public_key);
 
         let amount_of_chunks = utils::get_hash_value(&req_data, "amount.of.chunks");
         if amount_of_chunks.is_none() {
             continue;
         }
         let amount_of_chunks = amount_of_chunks.unwrap();
-        info!("{}", amount_of_chunks);
 
         let message = WsMessage {
             request_id: request_id.clone(),
@@ -729,13 +715,11 @@ async fn msg_prepare_for_file_request(
             },
         };
 
-        info!("Sending message");
         let message_str = serde_json::to_string(&message).unwrap();
         if tx.send(message_str).await.is_err() {
             error!("Receiver dropped");
             return Err("Receiver dropped".to_string());
         }
-        info!("Sending message done");
     }
 
     Ok(())
@@ -746,6 +730,8 @@ async fn msg_send_next_chunk(
     rcm: State<ConnectionManager>,
     user_id: &String,
 ) -> Result<(), String> {
+    info!("msg_send_next_chunk");
+
     let key = format!("file.reqs.sender:{}", &user_id);
     let request_ids = utils::redis_handler::smembers(rcm.clone(), &key)
         .await
@@ -779,13 +765,11 @@ async fn msg_send_next_chunk(
                     data: WsMsgSendNextChunk { last_chunk_nr: 0 },
                 };
 
-                info!("Sending message");
                 let message_str = serde_json::to_string(&message).unwrap();
                 if tx.send(message_str).await.is_err() {
                     error!("Receiver dropped");
                     return Err("Receiver dropped".to_string());
                 }
-                info!("Sending message done");
                 continue;
             }
         };
@@ -803,13 +787,11 @@ async fn msg_send_next_chunk(
             },
         };
 
-        info!("Sending message");
         let message_str = serde_json::to_string(&message).unwrap();
         if tx.send(message_str).await.is_err() {
             error!("Receiver dropped");
             return Err("Receiver dropped".to_string());
         }
-        info!("Sending message done");
     }
 
     Ok(())
@@ -820,6 +802,8 @@ async fn msg_add_chunk(
     rcm: State<ConnectionManager>,
     user_id: &String,
 ) -> Result<(), String> {
+    info!("msg_add_chunk");
+
     let key = format!("file.reqs.receiver:{}", &user_id);
     let request_ids = utils::redis_handler::smembers(rcm.clone(), &key)
         .await
@@ -852,15 +836,11 @@ async fn msg_add_chunk(
 
         if chunk == "FIN" {
             clean_up_request_data(rcm.clone(), &request_id).await;
-            info!("<< Last one >>");
-            info!("Sending message");
             let message_str = serde_json::to_string(&message).unwrap();
-            info!("{}", message_str);
             if tx.send(message_str).await.is_err() {
                 error!("Receiver dropped");
                 return Err("Receiver dropped".to_string());
             }
-            info!("Sending message done");
         } else {
             let chunk_parts: Vec<&str> = chunk.split('@').collect();
             let chunk_nr = chunk_parts[0].parse().unwrap_or(0);
@@ -872,13 +852,11 @@ async fn msg_add_chunk(
                 iv: chunk_parts[1].to_string(),
             };
 
-            info!("Sending message");
             let message_str = serde_json::to_string(&message).unwrap();
             if tx.send(message_str).await.is_err() {
                 error!("Receiver dropped");
                 return Err("Receiver dropped".to_string());
             }
-            info!("Sending message done");
         }
     }
 
@@ -886,9 +864,10 @@ async fn msg_add_chunk(
 }
 
 async fn clean_up_request_data(rcm: State<ConnectionManager>, request_id: &String) -> bool {
+    info!("clean_up_request_data");
+    
     let mut was_successful = true;
 
-    // TODO del file.req.users:{request.id}
     let key = format!("file.req.users:{}", &request_id);
     let users = match utils::redis_handler::smembers(rcm.clone(), &key).await {
         Ok(users) => users,
@@ -907,7 +886,6 @@ async fn clean_up_request_data(rcm: State<ConnectionManager>, request_id: &Strin
     }
 
     for user in users {
-        // TODO srem file.reqs.sender:{user.id}
         let key = format!("file.reqs.sender:{}", &user);
         match utils::redis_handler::srem(rcm.clone(), &key, &request_id).await {
             Ok(_) => (),
@@ -917,7 +895,6 @@ async fn clean_up_request_data(rcm: State<ConnectionManager>, request_id: &Strin
             }
         }
 
-        // TODO srem file.reqs.receiver:{user.id}
         let key = format!("file.reqs.receiver:{}", &user);
         match utils::redis_handler::srem(rcm.clone(), &key, &request_id).await {
             Ok(_) => (),
@@ -927,7 +904,6 @@ async fn clean_up_request_data(rcm: State<ConnectionManager>, request_id: &Strin
             }
         }
 
-        // TODO del file.req.ready:{request.id}
         let key = format!("file.req.ready:{}", &request_id);
         match utils::redis_handler::del(rcm.clone(), &key).await {
             Ok(_) => (),
@@ -937,7 +913,6 @@ async fn clean_up_request_data(rcm: State<ConnectionManager>, request_id: &Strin
             }
         }
 
-        // TODO del file.req.chunks:{request.id}
         let key = format!("file.req.chunks:{}", &request_id);
         match utils::redis_handler::del(rcm.clone(), &key).await {
             Ok(_) => (),

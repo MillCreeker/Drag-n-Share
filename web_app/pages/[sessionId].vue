@@ -33,7 +33,8 @@
                     <ul class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3">
                         <li v-for="file in files" :key="file.name" class="m-2">
                             <File :filename="file.name" :size="file.size" :isOwner="file.isOwner" :cbRefresh="loadData"
-                                :cbDownload="downloadFile" />
+                                :cbDownload="downloadFile" :totalChunks="file.totalChunks || 0"
+                                :currChunk="file.currChunk || 0" :isFullyDownloaded="file.isFullyDownloaded || false" />
                         </li>
                     </ul>
                 </div>
@@ -71,6 +72,8 @@ let accessCode = ref('');
 let isHost = ref(false);
 let isEditing = ref(false);
 let files = ref([]);
+
+
 
 const jwtCookie = useCookie('jwt');
 
@@ -128,7 +131,8 @@ const loadData = async () => {
             return {
                 name: file.name,
                 size: file.size,
-                isOwner: file.is_owner
+                isOwner: file.is_owner,
+                progress: 0
             };
         });
 
@@ -139,7 +143,7 @@ const loadData = async () => {
 
 const connectToWebSocket = async () => {
     socket = new WebSocket(`${config.public.wsUri}/session/${sessionId.value}`);
-    
+
     socket.onopen = () => {
         console.log('Connected to WebSocket');
         trnsRegister(socket);
@@ -149,6 +153,7 @@ const connectToWebSocket = async () => {
         console.log('Received:', event);
         const message = JSON.parse(event.data);
         await trnsWsHandleMessage(socket, message);
+        handleFileProgress(message);
     };
 
     socket.onclose = () => {
@@ -225,7 +230,33 @@ const deleteSession = async () => {
 
 const downloadFile = async (filename) => {
     await trnsRequestFile(socket, filename);
-}
+};
+
+const handleFileProgress = async (message) => {
+    const requestId = message.request_id;
+    const data = message.data;
+
+    const fileName = useCookie(requestId).value;
+    if (fileName === undefined) return;
+
+    const file = files.value.find(file => file.name === fileName);
+
+    switch (message.command) {
+        case 'add-chunk':
+            if (data.is_last_chunk) {
+                file.currChunk = file.totalChunks;
+                file.isFullyDownloaded = true;
+                return;
+            }
+
+            file.isFullyDownloaded = false;
+            file.currChunk = data.chunk_nr;
+            break;
+        case 'prepare-for-file-transfer':
+            file.totalChunks = data.amount_of_chunks;
+            break;
+    }
+};
 
 onMounted(async () => {
     await loadData();
