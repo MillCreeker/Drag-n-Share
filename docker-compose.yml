@@ -91,9 +91,9 @@ services:
         networks:
             - drag_n_share
         environment:
-            NUXT_PUBLIC_API_URI: "http://api.drag-n-share.com"
+            NUXT_PUBLIC_API_URI: "https://api.drag-n-share.com"
             NUXT_PUBLIC_WS_URI: "ws://trns.drag-n-share.com"
-            NUXT_PUBLIC_TRNS_URI: "http://trns.drag-n-share.com"
+            NUXT_PUBLIC_TRNS_URI: "https://trns.drag-n-share.com"
     
     web-app-dev:
         profiles:
