@@ -65,7 +65,6 @@ async function trnsHandleAcknowledgeFileRequest(socket, requestId, data) {
     console.log('trnsHandleAcknowledgeFileRequest');
     const clientPublicKey = await importKeyFromBase64(data.public_key);
     const filename = data.filename;
-    const userId = data.user_id;
 
     const requestIdCookie = useCookie(requestId);
     requestIdCookie.value = filename;
@@ -88,9 +87,9 @@ async function trnsHandleAcknowledgeFileRequest(socket, requestId, data) {
     await nextTick(); // ensure cookie is assigned
 
     const file = await getFile(filename);
-    const amountOfChunks = Math.ceil(file.length / 1024)
+    const amountOfChunks = Math.ceil(file.length / 8192)
 
-    await trnsAcknwoledgeFileRequest(socket, requestId, base64PublicKey, amountOfChunks, filename, userId);
+    await trnsAcknwoledgeFileRequest(socket, requestId, base64PublicKey, amountOfChunks, filename);
 }
 
 async function trnsHandlePrepareForFileTransfer(socket, requestId, data) {
@@ -129,16 +128,20 @@ async function trnsHandlePrepareForFileTransfer(socket, requestId, data) {
 
 async function trnsHandleSendNextChunk(socket, requestId, data) {
     console.log('trnsHandleSendNextChunk');
-    const lastChunkNr = data.last_chunk_nr;
-    console.log('lastChunkNr', lastChunkNr);
+    const chunkNr = data.chunk_nr;
+    console.log('chunkNr', chunkNr);
+
+    if (chunkNr === 0) {
+        return;
+    }
 
     const requestIdCookie = useCookie(requestId);
 
     console.log(requestIdCookie.value);
     const file = await getFile(requestIdCookie.value);
 
-    const cutOff = lastChunkNr * 1024 + 1024;
-    const chunk = file.slice(lastChunkNr * 1024, cutOff);
+    const cutOff = chunkNr * 8192;
+    const chunk = file.slice((chunkNr - 1) * 8192, cutOff);
     const isLastChunk = file.length <= cutOff;
 
     const secretCookie = useCookie(`${requestId}-secret`);
@@ -150,7 +153,7 @@ async function trnsHandleSendNextChunk(socket, requestId, data) {
     const encryptedChunk = await encryptData(secret, iv, chunk);
     const hexChunk = arrayBufferToHex(encryptedChunk);
 
-    await trnsAddChunk(socket, requestId, isLastChunk, lastChunkNr + 1, hexChunk, base64Iv);
+    await trnsAddChunk(socket, requestId, isLastChunk, chunkNr, hexChunk, base64Iv);
 }
 
 async function trnsHandleAddChunk(socket, requestId, data) {
@@ -182,18 +185,20 @@ async function trnsHandleAddChunk(socket, requestId, data) {
 
     getLargeString(`${requestId}-file`)
         .then(async (file) => {
-            file = [file.slice(0, chunkNr * 1024), chunk, file.slice(chunkNr * 1024)].join('');
+            file = `${file}${chunk}`;
             await storeLargeString(`${requestId}-file`, file);
         })
         .catch(async (error) => {
             console.error(error);
             await storeLargeString(`${requestId}-file`, chunk);
         });
+
+    await trnsReceivedChunk(socket, requestId, chunkNr);
 }
 
 
 
-async function trnsAcknwoledgeFileRequest(socket, requestId, publicKey, amountOfChunks, filename, userId) {
+async function trnsAcknwoledgeFileRequest(socket, requestId, publicKey, amountOfChunks, filename) {
     console.log('trnsAcknwoledgeFileRequest');
     const jwtCookie = useCookie('jwt');
 
@@ -205,7 +210,6 @@ async function trnsAcknwoledgeFileRequest(socket, requestId, publicKey, amountOf
             public_key: publicKey,
             amount_of_chunks: amountOfChunks,
             filename: filename,
-            user_id: userId
         })
     }));
 }
@@ -236,6 +240,20 @@ async function trnsAddChunk(socket, requestId, isLastChunk, chunkNr, hexChunk, i
             chunk_nr: chunkNr,
             chunk: hexChunk,
             iv: iv
+        })
+    }));
+}
+
+async function trnsReceivedChunk(socket, requestId, chunkNr) {
+    console.log('trnsReceivedFile');
+    const jwtCookie = useCookie('jwt');
+
+    socket.send(JSON.stringify({
+        jwt: jwtCookie.value,
+        command: 'received-chunk',
+        data: JSON.stringify({
+            request_id: requestId,
+            chunk_nr: chunkNr
         })
     }));
 }

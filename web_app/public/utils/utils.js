@@ -212,7 +212,15 @@ export function downloadDataUrl(dataUrl, filename) {
     const mimeType = metadata.match(/:(.*?);/)[1];
 
     // Decode the base64 data and create a Blob
-    const binary = atob(base64Data);
+    let binary;
+    try {
+        binary = atob(base64Data);
+    } catch (error) {
+        console.error('Failed to decode base64 data:', base64Data);
+        return;
+    }
+    console.log(base64Data);
+
     const array = new Uint8Array(binary.length);
     for (let i = 0; i < binary.length; i++) {
         array[i] = binary.charCodeAt(i);

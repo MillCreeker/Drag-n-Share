@@ -45,8 +45,8 @@ function convertSize(size) {
     let index = 0;
     let newSize = size;
 
-    while (newSize >= 1024 && index < units.length - 1) {
-        newSize /= 1024;
+    while (newSize >= 1000 && index < units.length - 1) {
+        newSize /= 1000;
         index++;
     }
 

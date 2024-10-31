@@ -308,7 +308,6 @@ The `data` attribute has to be stringified.
     "public_key": String,
     "amount_of_chunks": Number,
     "filename": String,
-    "user_id": String,
 }
 ```
 
@@ -329,6 +328,15 @@ The `data` attribute has to be stringified.
     "chunk_nr": Number,
     "chunk": String,
     "iv": String
+}
+```
+
+#### receive-chunk
+
+```JSON
+"data": {
+    "request_id": String,
+    "chunk_nr": Number,
 }
 ```
 
@@ -354,7 +362,6 @@ Messages send from the websocket indipendently.
 "data": {
     "public_key": String,
     "filename": String,
-    "user_id": String
 }
 ```
 
@@ -372,7 +379,7 @@ Messages send from the websocket indipendently.
 
 ```JSON
 "data": {
-    "last_chunk_nr": Number
+    "chunk_nr": Number
 }
 ```
 

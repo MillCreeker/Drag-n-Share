@@ -110,7 +110,7 @@ pub async fn get_random_dragon_name(
         "Syrax",
         "Shenron",
         "Ran",
-        "Shaw"
+        "Shaw",
     ];
 
     // first random name
@@ -252,9 +252,7 @@ pub fn get_hash_value(hash_vec: &Vec<String>, key: &str) -> Option<String> {
         return None;
     }
 
-    hash_vec
-        .get(key_idx.unwrap() + 1)
-        .map(|x| x.to_string())
+    hash_vec.get(key_idx.unwrap() + 1).map(|x| x.to_string())
 }
 
 pub fn check_user_is_host(
@@ -362,17 +360,12 @@ pub fn get_uuid() -> String {
     Uuid::new_v4().to_string()
 }
 
-pub fn deserialize_data<T: serde::de::DeserializeOwned>(data: &String) -> Result<T, String> {
+pub fn deserialize_data<T: serde::de::DeserializeOwned>(
+    data: &String,
+) -> Result<T, (StatusCode, String)> {
     match serde_json::from_str::<T>(&data) {
         Ok(data) => Ok(data),
-        Err(_) => Err("Wrong data format".to_string()),
-    }
-}
-
-pub fn handle_redis_error<T>(result: Result<T, (StatusCode, String)>) -> Result<T, String> {
-    match result {
-        Ok(v) => Ok(v),
-        Err((_, e)) => Err(format!("Error connecting to Redis: {}", e)),
+        Err(_) => Err((StatusCode::BAD_REQUEST, "Wrong data format.".to_string())),
     }
 }
 
@@ -380,10 +373,16 @@ pub async fn check_user_is_in_file_request(
     rcm: State<ConnectionManager>,
     request_id: &String,
     user_id: &String,
-) -> Result<(), String> {
+) -> Result<(), (StatusCode, String)> {
     let key = format!("file.req.users:{}", &request_id);
-    handle_redis_error(redis_handler::sismember(rcm, &key, &user_id).await)
-        .map_err(|_| "User not in file request")?;
+    redis_handler::sismember(rcm, &key, &user_id)
+        .await
+        .map_err(|_| {
+            (
+                StatusCode::UNAUTHORIZED,
+                "User not in file request.".to_string(),
+            )
+        })?;
 
     Ok(())
 }

@@ -74,6 +74,8 @@ To limit the call rate.
 
 ---
 
+---
+
 ## SET file.reqs:\<session.id\>
 
 List of all file requests in a session.
@@ -97,14 +99,6 @@ Public key of user requesting file.
 ### Data Structure
 
 `<public.key>`
-
-## file.req.ackn:\<session.id\>:\<filename\>:\<user.id\>
-
-Session ID of user acknowledging request.
-
-### Data Structure
-
-`<request.id>`
 
 ## SET file.req.users:\<request.id\>
 
@@ -145,30 +139,47 @@ Data for preparing file request.
 }
 ```
 
-## file.req.ready:\<request.id\>
+---
 
-Existance of this key indicates that the file is ready to be transmitted.
+---
+
+## chunk.curr:\<request.id\>
+
+Current chunk that is being handled.
 
 ### Data Structure
 
-`true`
+`<chunk.nr>`
 
-## LIST file.req.chunks:\<request.id\>
+## chunk.req:\<request.id\>
 
-Queue of file chunks + IV.
-Left in, right out.
+Currently requested chunk from sender.
 
-Chunks can only be of a certain size.
-There is also a limit to the amount of chunks in the queue.
+### Data Structure
+
+`<chunk.nr>`
+
+## chunk.sent:\<request.id\>
+
+Currently sent chunk to receiver.
+
+### Data Structure
+
+`<chunk.nr>`
+
+## chunk:\<request.id\>
+
+Current chunk data.
+Data includes (in order) _chunk.nr_, _IV_, _chunk_.
 
 ### Data Structure
 
 `<chunk.nr>@<iv>@<chunk>`
 
-## file.req.last.chunk:\<request.id\>
+## chunk.is.last:\<request.id\>
 
-Last chunk number added to the queue.
+Indicates if the currently handled chunk is the last one.
 
 ### Data Structure
 
-`<chunk.nr>`
+`<Boolean>`

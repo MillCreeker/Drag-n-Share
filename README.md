@@ -8,11 +8,12 @@ Tested on Ubuntu.
 [Docker](https://docs.docker.com/engine/install/) must be installed.
 
 The following ports must not be in use:
-- 80
-- 3000
-- 6379
-- 7878
-- 7879
+
+-   80
+-   3000
+-   6379
+-   7878
+-   7879
 
 ## Instructions
 
@@ -59,40 +60,44 @@ This is arguably the most important part of the application.
 It is a complicated piece of architecture due to its asynchronous nature.
 
 It mainly involves these files:
-- [transmittor.rs](./api/src/transmittor.rs)
-- [transmittor.js](./web_app/public/utils/transmittor.js)
-    - used in [\[sessionId.vue\]](./web_app/pages/[sessionId].vue)
+
+-   [transmittor.rs](./api/src/transmittor.rs)
+-   [transmittor.js](./web_app/public/utils/transmittor.js)
+    -   used in [\[sessionId.vue\]](./web_app/pages/[sessionId].vue)
 
 The interface/data structure parts can be found in their respective folders:
-- [API README](./api/README.md)
-- [DB README](./database/README.md)
+
+-   [API README](./api/README.md)
+-   [DB README](./database/README.md)
 
 ### Process
 
 #### Definitions
 
-- **Client S**: sender/provider of the file
-- **Client R**: receiver/requester of the file
+-   **Client S**: sender/provider of the file
+-   **Client R**: receiver/requester of the file
 
 ---
 
-- A websocket connection is established for both clients, respectively
-- The clients call the `register` function in order to be registered on the server
-    - This starts a listening process
-- *Client S* "uploads" a file.
-    - This registeres it in the session and makes it available for other clients
-    - It is also stored in the indexed database on the browser
-- *Client R* requests a file using the `request-file` command
-- The server sends the `acknowledge-file-request` comamnd to *Client S*
-- *Client S* sends the `acknowledge-file-request` command to the server
-- The server sends the `prepare-for-file-transfer` command to *Client R*
-- *Client R* sends the `ready-for-file-transfer` command to the server
-- Then, the file transmission process starts until every file chunk has been transmitted
-- As long as the chunk queue is not full, the server sends the `send-next-chunk` command to *Client S*
-    - *Client S* sends the `add-chunk` command to the server
-- When there is a chunk in the queue, the server sends the `add-chunk` command to *Client R*
-    - *Client R* appends this chunk to its file string stored in the indexed database on the browser
-- After the last chunk is transmitted, *Client R* downloads the file
+-   A websocket connection is established for both clients, respectively
+-   The clients call the `register` function in order to be registered on the server
+    -   This starts a listening process
+-   _Client S_ "uploads" a file.
+    -   This registeres it in the session and makes it available for other clients
+    -   It is also stored in the indexed database on the browser
+-   _Client R_ requests a file using the `request-file` command
+-   The server sends the `acknowledge-file-request` comamnd to _Client S_
+-   _Client S_ sends the `acknowledge-file-request` command to the server
+-   The server sends the `prepare-for-file-transfer` command to _Client R_
+-   _Client R_ sends the `ready-for-file-transfer` command to the server
+-   Then, the file transmission process starts until every file chunk has been transmitted:
+
+-   The server sends the `send-next-chunk` command to _Client S_
+-   _Client S_ sends the `add-chunk` command to the server
+-   The server sends the `add-chunk` command to _Client R_
+-   _Client R_ appends the chunk to its file string
+-   _Client R_ sends the `received-chunk` command to the server
+-   repeat ...
 
 ## Encryption
 
