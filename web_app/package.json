@@ -12,6 +12,7 @@
   "dependencies": {
     "@nuxtjs/axios": "^5.13.6",
     "@nuxtjs/tailwindcss": "^6.12.1",
+    "@sentry/nuxt": "^8.36.0",
     "nuxt": "^3.13.2",
     "vue": "^3.5.8"
   },
