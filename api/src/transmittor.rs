@@ -371,6 +371,19 @@ async fn request_file(
         ));
     }
 
+    let key = format!("file.reqs.receiver:{}", &user_id);
+    let request_ids = match utils::redis_handler::smembers(rcm.clone(), &key).await {
+        Ok(request_ids) => request_ids,
+        Err(_) => Vec::new(),
+    };
+
+    if request_ids.len() > 0 {
+        return Err((
+            StatusCode::CONFLICT,
+            "You have already requested a file.".to_string(),
+        ));
+    }
+
     let key = format!("file.reqs:{}", &session_id);
     utils::redis_handler::sadd(rcm.clone(), &key, &data.filename, None).await?;
 
@@ -524,7 +537,7 @@ async fn received_chunk(
             Err(_) => Vec::new(),
         };
         utils::redis_handler::del(rcm.clone(), &key).await?;
-        
+
         for user_id in users {
             let key = format!("file.reqs.sender:{}", &user_id);
             match utils::redis_handler::del(rcm.clone(), &key).await {
@@ -542,7 +555,6 @@ async fn received_chunk(
                 }
             };
         }
-
     } else {
         let key = format!("chunk.curr:{}", &data.request_id);
         utils::redis_handler::incr(rcm.clone(), &key, None).await?;
