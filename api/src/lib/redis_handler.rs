@@ -11,9 +11,15 @@ const DB_ERROR_MSG: &str = "error connection to database";
 pub async fn expire(
     mut rcm: State<ConnectionManager>,
     ref key: &str,
-    seconds: i64,
+    seconds: Option<i64>,
 ) -> Result<(), (StatusCode, String)> {
-    match rcm.expire::<&str, i64>(&key, seconds).await {
+    let mut exp_time = EXPIRATION_TIME;
+
+    if seconds.is_some() {
+        exp_time = seconds.unwrap();
+    }
+
+    match rcm.expire::<&str, i64>(&key, exp_time).await {
         Ok(_) => Ok(()),
         Err(e) => {
             error!("expire: {:?}", e);
@@ -86,7 +92,6 @@ pub async fn incr(
 ) -> Result<i64, (StatusCode, String)> {
     match rcm.incr(&key, 1).await {
         Ok(amount) => {
-            let expiration_time = expiration_time.unwrap_or(EXPIRATION_TIME);
             expire(rcm, &key, expiration_time).await?;
 
             return Ok(amount);
@@ -160,7 +165,7 @@ pub async fn sadd(
 ) -> Result<(), (StatusCode, String)> {
     match rcm.sadd::<&str, &str, String>(&key, &val).await {
         Ok(_) => {
-            expire(rcm, &key, expiration_time.unwrap_or(EXPIRATION_TIME)).await?;
+            expire(rcm, &key, expiration_time).await?;
             return Ok(());
         }
         Err(e) => {
@@ -254,7 +259,7 @@ pub async fn hset_multiple(
         .await
     {
         Ok(_) => {
-            expire(rcm, &key, expiration_time.unwrap_or(EXPIRATION_TIME)).await?;
+            expire(rcm, &key, expiration_time).await?;
 
             return Ok(());
         }
@@ -324,7 +329,7 @@ pub async fn lpush(
 ) -> Result<(), (StatusCode, String)> {
     match rcm.lpush::<&str, &str, String>(&key, &val).await {
         Ok(_) => {
-            expire(rcm, &key, expiration_time.unwrap_or(EXPIRATION_TIME)).await?;
+            expire(rcm, &key, expiration_time).await?;
 
             return Ok(());
         },

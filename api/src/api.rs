@@ -70,8 +70,7 @@ async fn main() {
     .expect("Error serving application");
 }
 
-async fn ping(
-    // rcm: State<ConnectionManager>,
+async fn ping(// rcm: State<ConnectionManager>,
     // secure_ip: SecureClientIp,
 ) -> Result<(StatusCode, String), (StatusCode, String)> {
     // utils::handle_call_rate_limit(rcm, &secure_ip).await?;
@@ -326,7 +325,9 @@ async fn update_session(
     utils::redis_handler::del(rcm.clone(), &key).await?;
 
     let key = format!("session:{}", &new_name);
-    utils::redis_handler::set(rcm, &key, &session_id, None).await?;
+    utils::redis_handler::set(rcm.clone(), &key, &session_id, None).await?;
+
+    utils::prolong_session(rcm, &session_id).await;
 
     Ok((
         StatusCode::OK,
@@ -414,10 +415,26 @@ async fn get_all_file_metadata_in_session(
         if file.len() != 6 {
             continue;
         }
+
+        let filename = match utils::get_hash_value(&file, "name") {
+            None => continue,
+            Some(name) => name,
+        };
+
+        let size = match utils::get_hash_value(&file, "size") {
+            None => continue,
+            Some(size) => size,
+        };
+
+        let owner_id = match utils::get_hash_value(&file, "owner.id") {
+            None => continue,
+            Some(id) => id,
+        };
+
         let file = FileMetadataResponse {
-            name: file[1].clone(),
-            size: file[3].parse().unwrap_or(0),
-            is_owner: file[5] == user.id,
+            name: filename,
+            size: size.parse().unwrap_or(0),
+            is_owner: owner_id == user.id,
         };
         files.push(file);
     }
@@ -555,10 +572,52 @@ async fn get_file_metadata(
         ));
     }
 
+    let filename = match utils::get_hash_value(&file_data, "name") {
+        None => {
+            return Err((
+                StatusCode::NOT_FOUND,
+                json!({
+                    "success": false,
+                    "message": "file not found"
+                })
+                .to_string(),
+            ))
+        }
+        Some(name) => name,
+    };
+
+    let size = match utils::get_hash_value(&file_data, "size") {
+        None => {
+            return Err((
+                StatusCode::NOT_FOUND,
+                json!({
+                    "success": false,
+                    "message": "file not found"
+                })
+                .to_string(),
+            ))
+        }
+        Some(size) => size,
+    };
+
+    let owner_id = match utils::get_hash_value(&file_data, "owner.id") {
+        None => {
+            return Err((
+                StatusCode::NOT_FOUND,
+                json!({
+                    "success": false,
+                    "message": "file not found"
+                })
+                .to_string(),
+            ))
+        }
+        Some(id) => id,
+    };
+
     let file = FileMetadataResponse {
-        name: file_data[1].clone(),
-        size: file_data[3].parse().unwrap_or(0),
-        is_owner: file_data[5] == user.id,
+        name: filename,
+        size: size.parse().unwrap_or(0),
+        is_owner: owner_id == user.id,
     };
 
     Ok((

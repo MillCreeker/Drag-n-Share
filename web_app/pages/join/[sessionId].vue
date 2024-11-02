@@ -5,7 +5,10 @@
     </Head>
 
     <div class="text-center">
-        <h1 class="text-5xl font-bold tracking-tight text-yellow-500">{{ sessionName }}</h1>
+        <h1 class="text-5xl font-bold tracking-tight text-yellow-500 my-8"
+            style="text-shadow: -1px -1px 0 black, 1px -1px 0 black, -1px 1px 0 black, 1px 1px 0 black">
+            {{ sessionName }}
+        </h1>
         <form @submit.prevent="joinSession">
             <input id="codeInput" type="text" name="code" placeholder="000 000" pattern="[0-9\s]{7}" inputmode="numeric"
                 maxlength="7"

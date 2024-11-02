@@ -219,7 +219,6 @@ export function downloadDataUrl(dataUrl, filename) {
         console.error('Failed to decode base64 data:', base64Data);
         return;
     }
-    console.log(base64Data);
 
     const array = new Uint8Array(binary.length);
     for (let i = 0; i < binary.length; i++) {
@@ -286,7 +285,7 @@ export async function getFile(id) {
         request.onsuccess = () => {
             if (request.result) {
                 const fileBlob = request.result.fileBlob;
-                // Convert the Blob back to a Base64 string
+                // convert the Blob back to a Base64 string
                 const reader = new FileReader();
                 reader.onloadend = () => {
                     // const base64String = reader.result.split(',')[1]; // remove data URL prefix
@@ -343,4 +342,24 @@ export async function getLargeString(id) {
             reject(`Failed to retrieve string ${id}: ${event.target.error}`);
         };
     });
+}
+
+async function clearIndexedDB() {
+    const databases = await indexedDB.databases();
+    databases.forEach((db) => {
+        indexedDB.deleteDatabase(db.name);
+    });
+}
+
+function clearCookies() {
+    document.cookie.split(";").forEach((cookie) => {
+        const eqPos = cookie.indexOf("=");
+        const name = eqPos > -1 ? cookie.substr(0, eqPos) : cookie;
+        document.cookie = `${name}=;expires=Thu, 01 Jan 1970 00:00:00 GMT;path=/`;
+    });
+}
+
+export async function clearStorage() {
+    await clearIndexedDB();
+    clearCookies();
 }

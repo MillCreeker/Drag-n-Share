@@ -32,7 +32,7 @@ use redis::aio::ConnectionManager;
 use env_logger::Env;
 use log::{error, info};
 
-const MAX_CHUNK_SIZE: usize = 20_000;
+const MAX_CHUNK_SIZE: usize = 70_000;
 
 static LISTENERS: Lazy<Arc<DashMap<String, ()>>> = Lazy::new(|| Arc::new(DashMap::new()));
 
@@ -104,7 +104,7 @@ async fn ws_handler_inner(
             message = socket.next() => {
                 match message {
                     Some(Ok(Message::Text(text))) => {
-                        info!("Received message from client: {}", text);
+                        // info!("Received message from client: {}", text);
 
                         handle_incomming_message(
                             tx_clone.clone(),
@@ -276,7 +276,7 @@ async fn start_listeners(
         let session_id = session_id.clone();
         let user_id = user_id.clone();
 
-        let mut interval = time::interval(Duration::from_millis(250));
+        let mut interval = time::interval(Duration::from_millis(100));
         // let mut interval = time::interval(Duration::from_secs(5));
 
         tokio::spawn(async move {
@@ -378,7 +378,9 @@ async fn request_file(
     utils::redis_handler::sadd(rcm.clone(), &key, &user_id, None).await?;
 
     let key = format!("file.req:{}:{}:{}", &session_id, &data.filename, &user_id);
-    utils::redis_handler::set(rcm, &key, &data.public_key, None).await?;
+    utils::redis_handler::set(rcm.clone(), &key, &data.public_key, None).await?;
+
+    utils::prolong_session(rcm, &session_id).await;
 
     Ok(())
 }
@@ -515,6 +517,32 @@ async fn received_chunk(
 
         let key = format!("chunk.curr:{}", &data.request_id);
         utils::redis_handler::del(rcm.clone(), &key).await?;
+
+        let key = format!("file.req.users:{}", &data.request_id);
+        let users = match utils::redis_handler::smembers(rcm.clone(), &key).await {
+            Ok(users) => users,
+            Err(_) => Vec::new(),
+        };
+        utils::redis_handler::del(rcm.clone(), &key).await?;
+        
+        for user_id in users {
+            let key = format!("file.reqs.sender:{}", &user_id);
+            match utils::redis_handler::del(rcm.clone(), &key).await {
+                Ok(_) => (),
+                Err(_) => {
+                    error!("Failed to delete file.reqs.sender:user.id");
+                }
+            };
+
+            let key = format!("file.reqs.receiver:{}", &user_id);
+            match utils::redis_handler::del(rcm.clone(), &key).await {
+                Ok(_) => (),
+                Err(_) => {
+                    error!("Failed to delete file.reqs.receiver:user.id");
+                }
+            };
+        }
+
     } else {
         let key = format!("chunk.curr:{}", &data.request_id);
         utils::redis_handler::incr(rcm.clone(), &key, None).await?;
@@ -527,7 +555,7 @@ async fn received_chunk(
     utils::redis_handler::del(rcm.clone(), &key).await?;
 
     let key = format!("chunk.req:{}", &data.request_id);
-    utils::redis_handler::del(rcm, &key).await?;
+    utils::redis_handler::del(rcm.clone(), &key).await?;
 
     Ok(())
 }
@@ -794,6 +822,10 @@ async fn msg_add_chunk(
             Ok(chunk_data) => chunk_data,
             Err(_) => continue,
         };
+
+        if chunk_data.is_empty() {
+            continue;
+        }
 
         let chunk_split = chunk_data.split('@').collect::<Vec<&str>>();
         if chunk_split.len() != 3 {

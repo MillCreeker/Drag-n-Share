@@ -24,6 +24,7 @@
 </template>
 
 <script setup>
+import { clearStorage } from '~/public/utils/utils';
 import { getIdForSessionName } from '~/public/utils/api';
 import UploadButton from '../components/UploadButton.vue';
 import { onMounted } from 'vue';
@@ -77,5 +78,7 @@ const joinSession = async () => {
 
 onMounted(async () => {
     await redirectIfHost();
+
+    clearStorage();
 });
 </script>

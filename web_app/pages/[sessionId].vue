@@ -9,6 +9,7 @@
             <DropArea :cbRefresh="loadData">
                 <div class="relative mt-4">
                     <h1 v-if="!isEditing" class="text-5xl font-bold tracking-tight text-yellow-500 cursor-pointer"
+                        style="text-shadow: -1px -1px 0 black, 1px -1px 0 black, -1px 1px 0 black, 1px 1px 0 black"
                         @click="isHost ? isEditing = true : null">{{ sessionName }}</h1>
                     <form v-else @submit.prevent="updateSessionName">
                         <input type="text"
@@ -150,7 +151,7 @@ const connectToWebSocket = async () => {
     };
 
     socket.onmessage = async (event) => {
-        console.log('Received:', event);
+        // console.log('Received:', event);
         const message = JSON.parse(event.data);
         await trnsWsHandleMessage(socket, message);
         handleFileProgress(message);

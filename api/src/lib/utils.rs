@@ -185,7 +185,7 @@ pub fn create_jwt(
     }
 }
 
-const JWT_EXPIRATION_TIME: u128 = 5 * 60 * 1000; // 5 minutes
+const JWT_EXPIRATION_TIME: u128 = 60 * 60 * 1000; // 1 hour
 
 pub fn decode_jwt(ref jwt: &str) -> Result<Claims, (StatusCode, String)> {
     let jwt_key = std::env::var("JWT_KEY").map_err(|_| {
@@ -436,4 +436,56 @@ pub async fn is_request_ready(rcm: State<ConnectionManager>, request_id: &String
     };
 
     is_ready
+}
+
+pub async fn prolong_session(rcm: State<ConnectionManager>, session_id: &String) {
+    let key = format!("session:{}", &session_id);
+    let session_name = match redis_handler::hget(rcm.clone(), &key, "name").await {
+        Ok(session_name) => Some(session_name),
+        Err(_) => None,
+    };
+
+    if session_name.is_none() {
+        return;
+    }
+
+    let session_name = session_name.unwrap();
+
+    match redis_handler::expire(rcm.clone(), &key, None).await {
+        Ok(_) => (),
+        Err(_) => {
+            error!("Failed to prolong session: {}", &key);
+        }
+    }
+
+    let key = format!("session:{}", &session_name);
+    match redis_handler::expire(rcm.clone(), &key, None).await {
+        Ok(_) => (),
+        Err(_) => {
+            error!("Failed to prolong session: {}", &session_name);
+        }
+    }
+
+    let key = format!("files:{}", &session_id);
+    let files = match redis_handler::smembers(rcm.clone(), &key).await {
+        Ok(files) => files,
+        Err(_) => Vec::new(),
+    };
+
+    match redis_handler::expire(rcm.clone(), &key, None).await {
+        Ok(_) => (),
+        Err(_) => {
+            error!("Failed to prolong session files: {}", &session_id);
+        }
+    }
+
+    for file in files {
+        let key = format!("files:{}:{}", &session_id, &file);
+        match redis_handler::expire(rcm.clone(), &key, None).await {
+            Ok(_) => (),
+            Err(_) => {
+                error!("Failed to prolong file: {}", &key);
+            }
+        }
+    }
 }
