@@ -1,4 +1,4 @@
-FROM rust:1.80.1 AS build
+FROM rust:1.82.0 AS build
 
 RUN apt-get update && apt-get install -y musl-tools musl-dev
 
@@ -21,7 +21,7 @@ RUN cargo build --bins --release --target x86_64-unknown-linux-musl
 
 
 # smaller image
-FROM alpine:3.20.2
+FROM alpine:3.20.3
 
 WORKDIR /app
 

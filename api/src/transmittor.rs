@@ -38,11 +38,6 @@ static LISTENERS: Lazy<Arc<DashMap<String, ()>>> = Lazy::new(|| Arc::new(DashMap
 
 #[tokio::main]
 async fn main() {
-    let _guard = sentry::init(("https://0c8969804b633f428836cf90d184119b@o4508227941367808.ingest.de.sentry.io/4508228120019024", sentry::ClientOptions {
-        release: sentry::release_name!(),
-        ..Default::default()
-    }));
-
     env_logger::Builder::from_env(Env::default().default_filter_or("info")).init();
 
     dotenvy::dotenv().expect("Unable to load .env file");
